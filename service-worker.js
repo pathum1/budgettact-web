@@ -1,16 +1,16 @@
 const CACHE_NAME = 'budgettact-v1.0.0';
 const urlsToCache = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/css/styles.css',
-  '/js/app.js',
-  '/js/storage.js',
-  '/js/sync.js',
-  '/js/ui.js',
-  '/js/utils.js',
-  '/assets/icons/icon-192.png',
-  '/assets/icons/icon-512.png',
+  './',
+  './index.html',
+  './manifest.json',
+  './css/styles.css',
+  './js/app.js',
+  './js/storage.js',
+  './js/sync.js',
+  './js/ui.js',
+  './js/utils.js',
+  './assets/icons/icon-192.png',
+  './assets/icons/icon-512.png',
   'https://unpkg.com/dexie@3/dist/dexie.min.js'
 ];
 
