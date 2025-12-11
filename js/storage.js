@@ -72,7 +72,12 @@ const Storage = (() => {
 
       // Import all data tables
       if (data.transactions && data.transactions.length > 0) {
-        await db.transactions.bulkAdd(data.transactions);
+        // Normalize transaction amounts (convert negative to positive)
+        const normalizedTransactions = data.transactions.map(t => ({
+          ...t,
+          transactionAmount: Math.abs(t.transactionAmount)
+        }));
+        await db.transactions.bulkAdd(normalizedTransactions);
       }
 
       if (data.categories && data.categories.length > 0) {

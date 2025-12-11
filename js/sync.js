@@ -120,8 +120,8 @@ const Sync = (() => {
         errors.push(`Transaction ${i}: invalid transactionType (must be 'expense' or 'income')`);
       }
 
-      if (typeof t.transactionAmount !== 'number' || t.transactionAmount < 0) {
-        errors.push(`Transaction ${i}: invalid transactionAmount (must be positive number)`);
+      if (typeof t.transactionAmount !== 'number') {
+        errors.push(`Transaction ${i}: invalid transactionAmount (must be number)`);
       }
 
       if (typeof t.transactionCategory !== 'number') {

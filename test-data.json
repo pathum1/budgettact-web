@@ -1,0 +1,73 @@
+{
+  "version": "1.0",
+  "exportedAt": "2025-12-11T10:19:43.059150Z",
+  "deviceId": "android-1765448382951-82951",
+  "deviceName": "Android Device",
+  "currency": "USD",
+  "data": {
+    "transactions": [
+      {
+        "transactionID": "1765448292949",
+        "billerName": "Wallet",
+        "merchantName": "test",
+        "transactionDate": "2025-12-11T10:18:01.810800Z",
+        "transactionType": "expense",
+        "transactionAmount": -25.0,
+        "transactionCategory": 1,
+        "currency": "USD"
+      },
+      {
+        "transactionID": "1765448337699",
+        "billerName": "Wallet",
+        "merchantName": "yess",
+        "transactionDate": "2025-12-08T18:30:00.000Z",
+        "transactionType": "income",
+        "transactionAmount": 250.0,
+        "transactionCategory": 2,
+        "currency": "USD"
+      }
+    ],
+    "categories": [
+      {
+        "id": 1,
+        "categoryType": "Other",
+        "budgetAmount": 0.0,
+        "iconName": null,
+        "autoPropagateToNextMonth": true,
+        "budgetNotificationsEnabled": true
+      },
+      {
+        "id": 2,
+        "categoryType": "bills",
+        "budgetAmount": 2500.0,
+        "iconName": "groceries",
+        "autoPropagateToNextMonth": true,
+        "budgetNotificationsEnabled": true
+      }
+    ],
+    "budgetHistory": [
+      {
+        "id": 1,
+        "categoryId": 1,
+        "yearMonth": "2025-12",
+        "budgetAmount": 0.0,
+        "createdAt": "2025-12-11T10:17:44.555064Z"
+      }
+    ],
+    "savingsGoals": [],
+    "goalTransactions": [],
+    "recurringTransactions": [],
+    "billers": [
+      {
+        "billerID": "1",
+        "billerName": "Total",
+        "billerActualName": "Total Balance"
+      },
+      {
+        "billerID": "2",
+        "billerName": "Wallet",
+        "billerActualName": "Cash Wallet"
+      }
+    ]
+  }
+}
