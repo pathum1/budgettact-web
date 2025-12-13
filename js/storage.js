@@ -21,10 +21,69 @@ const Storage = (() => {
     try {
       await db.open();
       console.log('Database initialized successfully');
+
+      // Migrate existing data to ensure proper boolean types
+      await migrateData();
+
       return true;
     } catch (error) {
       console.error('Failed to initialize database:', error);
       return false;
+    }
+  }
+
+  /**
+   * Migrate existing data to ensure proper data types
+   * Converts integer booleans (1/0) to actual booleans (true/false)
+   */
+  async function migrateData() {
+    try {
+      console.log('🔄 Checking for data migration...');
+
+      // Migrate savingsGoals
+      const goals = await db.savingsGoals.toArray();
+      console.log(`🔍 Found ${goals.length} savings goals to check`);
+
+      if (goals.length > 0) {
+        console.log('🔍 First goal before migration:', goals[0]);
+        console.log('🔍 isActive type:', typeof goals[0].isActive);
+      }
+
+      let migratedGoals = 0;
+      for (const goal of goals) {
+        if (typeof goal.isActive !== 'boolean') {
+          console.log(`🔧 Migrating goal ${goal.id}: isActive from ${goal.isActive} (${typeof goal.isActive}) to boolean`);
+          goal.isActive = Boolean(goal.isActive);
+          goal.notificationsEnabled = Boolean(goal.notificationsEnabled || false);
+          await db.savingsGoals.put(goal);
+          migratedGoals++;
+        }
+      }
+      if (migratedGoals > 0) {
+        console.log(`✅ Migrated ${migratedGoals} savings goals`);
+      }
+
+      // Migrate categories
+      const categories = await db.categories.toArray();
+      let migratedCategories = 0;
+      for (const cat of categories) {
+        if (typeof cat.autoPropagateToNextMonth !== 'boolean') {
+          cat.autoPropagateToNextMonth = Boolean(cat.autoPropagateToNextMonth);
+          cat.budgetNotificationsEnabled = Boolean(cat.budgetNotificationsEnabled || false);
+          await db.categories.put(cat);
+          migratedCategories++;
+        }
+      }
+      if (migratedCategories > 0) {
+        console.log(`✅ Migrated ${migratedCategories} categories`);
+      }
+
+      if (migratedGoals === 0 && migratedCategories === 0) {
+        console.log('✅ No migration needed - data already correct');
+      }
+    } catch (error) {
+      console.error('❌ Migration failed:', error);
+      // Don't throw - migration failure shouldn't prevent app from working
     }
   }
 
@@ -81,7 +140,13 @@ const Storage = (() => {
       }
 
       if (data.categories && data.categories.length > 0) {
-        await db.categories.bulkAdd(data.categories);
+        // Normalize boolean fields (Android sends 1/0, we need true/false)
+        const normalizedCategories = data.categories.map(c => ({
+          ...c,
+          autoPropagateToNextMonth: Boolean(c.autoPropagateToNextMonth),
+          budgetNotificationsEnabled: Boolean(c.budgetNotificationsEnabled || false)
+        }));
+        await db.categories.bulkAdd(normalizedCategories);
       }
 
       if (data.budgetHistory && data.budgetHistory.length > 0) {
@@ -89,7 +154,13 @@ const Storage = (() => {
       }
 
       if (data.savingsGoals && data.savingsGoals.length > 0) {
-        await db.savingsGoals.bulkAdd(data.savingsGoals);
+        // Normalize boolean fields (Android sends 1/0, we need true/false)
+        const normalizedGoals = data.savingsGoals.map(g => ({
+          ...g,
+          isActive: Boolean(g.isActive),
+          notificationsEnabled: Boolean(g.notificationsEnabled || false)
+        }));
+        await db.savingsGoals.bulkAdd(normalizedGoals);
       }
 
       if (data.goalTransactions && data.goalTransactions.length > 0) {
@@ -239,12 +310,39 @@ const Storage = (() => {
    */
   async function getAllSavingsGoals(activeOnly = false) {
     try {
-      if (activeOnly) {
-        return await db.savingsGoals.where('isActive').equals(true).toArray();
+      console.log('📊 getAllSavingsGoals called with activeOnly:', activeOnly);
+
+      // First, get ALL goals to inspect the data
+      const allGoals = await db.savingsGoals.toArray();
+      console.log('📊 Total savings goals in DB:', allGoals.length);
+
+      if (allGoals.length > 0) {
+        // Log the first goal to see its structure
+        console.log('📊 Sample goal:', allGoals[0]);
+        console.log('📊 isActive type:', typeof allGoals[0].isActive);
+        console.log('📊 isActive value:', allGoals[0].isActive);
+
+        // Check all goals for type consistency
+        const typeCheck = allGoals.map(g => ({
+          id: g.id,
+          isActiveType: typeof g.isActive,
+          isActiveValue: g.isActive
+        }));
+        console.log('📊 All goals type check:', typeCheck);
       }
-      return await db.savingsGoals.toArray();
+
+      if (activeOnly) {
+        // Try filtering manually instead of using indexed query
+        console.log('📊 Filtering for active goals only...');
+        const activeGoals = allGoals.filter(g => g.isActive === true || g.isActive === 1);
+        console.log('📊 Active goals found:', activeGoals.length);
+        return activeGoals;
+      }
+
+      return allGoals;
     } catch (error) {
-      console.error('Failed to get savings goals:', error);
+      console.error('❌ Failed to get savings goals:', error);
+      console.error('❌ Error details:', error.message, error.stack);
       return [];
     }
   }

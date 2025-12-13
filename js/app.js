@@ -1,6 +1,6 @@
 // Main Application
 (async function() {
-  let currentView = 'dashboard';
+  let currentView = null;  // Start as null so first navigation always renders
 
   /**
    * Initialize application
@@ -20,7 +20,7 @@
 
     // Set up event listeners
     setupNavigation();
-    setupImportModal();
+    setupSyncButton();
     setupFilters();
 
     // Load initial view
@@ -37,6 +37,9 @@
    * Register service worker for PWA
    */
   function registerServiceWorker() {
+    // Temporarily disabled for testing
+    console.log('Service Worker registration disabled for testing');
+    /*
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./service-worker.js')
         .then(registration => {
@@ -46,6 +49,7 @@
           console.log('Service Worker registration failed:', error);
         });
     }
+    */
   }
 
   /**
@@ -73,6 +77,14 @@
    * Navigate to a view
    */
   async function navigateToView(viewName) {
+    // Prevent re-navigation if already on this view
+    if (currentView === viewName) {
+      console.log('Already on view:', viewName);
+      return;
+    }
+
+    console.log('Navigating to view:', viewName);
+
     // Update active nav item
     document.querySelectorAll('.nav-item').forEach(item => {
       item.classList.remove('active');
@@ -89,7 +101,10 @@
     // Show selected view
     const viewElement = document.getElementById(`view-${viewName}`);
     if (viewElement) {
+      console.log('View element found, showing:', `view-${viewName}`);
       viewElement.classList.add('active');
+    } else {
+      console.error('View element not found:', `view-${viewName}`);
     }
 
     // Update hash
@@ -104,7 +119,17 @@
    * Render current view
    */
   async function renderCurrentView() {
+    console.log('Rendering view:', currentView);
     switch (currentView) {
+      case 'sync':
+        console.log('Initializing WebRTC sync...');
+        try {
+          await Sync.initializeWebRTCSync(showSyncStatus, showError);
+          console.log('WebRTC sync initialized successfully');
+        } catch (err) {
+          console.error('Failed to initialize WebRTC sync:', err);
+        }
+        break;
       case 'dashboard':
         await UI.renderDashboard();
         break;
@@ -121,95 +146,141 @@
   }
 
   /**
-   * Set up import modal
+   * Set up sync button - navigates to sync view
    */
-  function setupImportModal() {
-    const modal = document.getElementById('import-modal');
-    const importBtn = document.getElementById('import-btn');
-    const closeBtn = document.getElementById('close-modal');
-    const cancelBtn = document.getElementById('cancel-import');
-    const confirmBtn = document.getElementById('confirm-import');
-    const textarea = document.getElementById('import-textarea');
-    const errorDiv = document.getElementById('import-error');
-    const successDiv = document.getElementById('import-success');
+  function setupSyncButton() {
+    const syncBtn = document.getElementById('sync-btn');
+    const headerImportBtn = document.getElementById('import-btn');
+    const manualImportBtn = document.getElementById('manualImportBtn');
+    const manualImportModal = document.getElementById('manualImportModal');
+    const closeManualImportBtn = document.getElementById('closeManualImportBtn');
+    const confirmImportBtn = document.getElementById('importBtn');
+    const manualImportData = document.getElementById('manualImportData');
+    const importError = document.getElementById('import-error');
+    const importSuccess = document.getElementById('import-success');
 
-    // Open modal
-    importBtn.addEventListener('click', () => {
-      modal.classList.add('active');
-      textarea.value = '';
-      errorDiv.classList.remove('active');
-      successDiv.classList.remove('active');
-      errorDiv.textContent = '';
-      successDiv.textContent = '';
-    });
+    // Sync button - navigate to sync view
+    if (syncBtn) {
+      syncBtn.addEventListener('click', () => {
+        console.log('Sync button clicked - navigating to sync view');
+        navigateToView('sync');
+      });
+    } else {
+      console.error('Sync button not found!');
+    }
 
-    // Close modal
-    const closeModal = () => {
-      modal.classList.remove('active');
-    };
+    // Header import button - also navigate to sync view
+    if (headerImportBtn) {
+      headerImportBtn.addEventListener('click', () => {
+        console.log('Header import button clicked - navigating to sync view');
+        navigateToView('sync');
+      });
+    }
 
-    closeBtn.addEventListener('click', closeModal);
-    cancelBtn.addEventListener('click', closeModal);
+    // Manual import button - open manual import modal
+    if (manualImportBtn) {
+      manualImportBtn.addEventListener('click', () => {
+        manualImportModal.style.display = 'block';
+        manualImportData.value = '';
+        importError.textContent = '';
+        importSuccess.textContent = '';
+        importError.classList.remove('active');
+        importSuccess.classList.remove('active');
+      });
+    }
+
+    // Close manual import modal
+    if (closeManualImportBtn) {
+      closeManualImportBtn.addEventListener('click', () => {
+        manualImportModal.style.display = 'none';
+      });
+    }
 
     // Click outside to close
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) {
-        closeModal();
-      }
-    });
-
-    // Confirm import
-    confirmBtn.addEventListener('click', async () => {
-      const jsonString = textarea.value.trim();
-
-      if (!jsonString) {
-        errorDiv.textContent = 'Please paste your budget data';
-        errorDiv.classList.add('active');
-        return;
-      }
-
-      // Disable button during import
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = 'Importing...';
-      errorDiv.classList.remove('active');
-      successDiv.classList.remove('active');
-
-      try {
-        const result = await Sync.importSyncData(jsonString);
-
-        if (result.success) {
-          successDiv.textContent = `${result.message}\n\nImported:\n- ${result.stats.transactions} transactions\n- ${result.stats.categories} categories\n- ${result.stats.goals} goals`;
-          successDiv.classList.add('active');
-
-          // Update UI
-          await UI.updateSyncStatus();
-
-          // Close modal and refresh view after 2 seconds
-          setTimeout(async () => {
-            closeModal();
-            await renderCurrentView();
-            Utils.showNotification('Data imported successfully!', 'success');
-          }, 2000);
-        } else {
-          let errorMessage = result.message;
-          if (result.errors && result.errors.length > 0) {
-            errorMessage += '\n\nErrors:\n' + result.errors.slice(0, 5).join('\n');
-            if (result.errors.length > 5) {
-              errorMessage += `\n... and ${result.errors.length - 5} more errors`;
-            }
-          }
-          errorDiv.textContent = errorMessage;
-          errorDiv.classList.add('active');
+    if (manualImportModal) {
+      manualImportModal.addEventListener('click', (e) => {
+        if (e.target === manualImportModal) {
+          manualImportModal.style.display = 'none';
         }
-      } catch (error) {
-        console.error('Import error:', error);
-        errorDiv.textContent = 'An unexpected error occurred. Please try again.';
-        errorDiv.classList.add('active');
-      } finally {
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = 'Import';
-      }
-    });
+      });
+    }
+
+    // Import button click
+    if (confirmImportBtn) {
+      confirmImportBtn.addEventListener('click', async () => {
+        const jsonData = manualImportData.value.trim();
+
+        if (!jsonData) {
+          importError.textContent = 'Please paste your JSON data';
+          importError.classList.add('active');
+          return;
+        }
+
+        confirmImportBtn.disabled = true;
+        confirmImportBtn.textContent = 'Importing...';
+        importError.classList.remove('active');
+        importSuccess.classList.remove('active');
+
+        try {
+          const result = await Sync.importSyncData(jsonData);
+
+          if (result.success) {
+            importSuccess.textContent = `${result.message}\n\nImported:\n- ${result.stats.transactions} transactions\n- ${result.stats.categories} categories\n- ${result.stats.goals} goals`;
+            importSuccess.classList.add('active');
+
+            setTimeout(() => {
+              manualImportModal.style.display = 'none';
+              window.location.reload();
+            }, 2000);
+          } else {
+            let errorMessage = result.message;
+            if (result.errors && result.errors.length > 0) {
+              errorMessage += '\n\nErrors:\n' + result.errors.slice(0, 5).join('\n');
+            }
+            importError.textContent = errorMessage;
+            importError.classList.add('active');
+          }
+        } catch (err) {
+          importError.textContent = 'Invalid JSON data: ' + err.message;
+          importError.classList.add('active');
+        } finally {
+          confirmImportBtn.disabled = false;
+          confirmImportBtn.textContent = 'Import Data';
+        }
+      });
+    }
+  }
+
+  /**
+   * Show sync status message
+   */
+  function showSyncStatus(message) {
+    const statusText = document.querySelector('#syncStatus .status-text');
+    const spinner = document.getElementById('syncSpinner');
+
+    if (statusText) {
+      statusText.textContent = message;
+    }
+
+    if (spinner && message.includes('...')) {
+      spinner.style.display = 'block';
+    } else if (spinner) {
+      spinner.style.display = 'none';
+    }
+  }
+
+  /**
+   * Show error notification
+   */
+  function showError(message) {
+    Utils.showNotification(message, 'error');
+  }
+
+  /**
+   * Show success notification
+   */
+  function showSuccess(message) {
+    Utils.showNotification(message, 'success');
   }
 
   /**

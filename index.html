@@ -18,13 +18,22 @@
     <header>
         <div class="header-content">
             <h1>BudgetTact</h1>
-            <button id="import-btn" class="btn-icon" title="Import Data">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="7 10 12 15 17 10"></polyline>
-                    <line x1="12" y1="15" x2="12" y2="3"></line>
-                </svg>
-            </button>
+            <div class="header-buttons">
+                <button id="sync-btn" class="btn-icon" title="Sync with Phone">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                    </svg>
+                </button>
+                <button id="import-btn" class="btn-icon" title="Import Data (Manual)">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7 10 12 15 17 10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                </button>
+            </div>
         </div>
     </header>
 
@@ -62,6 +71,49 @@
     </nav>
 
     <main>
+        <div id="view-sync" class="view">
+            <div class="sync-container">
+                <div class="sync-header">
+                    <h2>Sync with Phone</h2>
+                    <p class="instructions">
+                        Scan this QR code with your BudgetTact Android app to sync your data
+                    </p>
+                </div>
+
+                <div class="qr-wrapper">
+                    <div id="qrCodeContainer" class="qr-code-display">
+                        <!-- QR code will be generated here -->
+                    </div>
+                    <div id="syncStatus" class="sync-status-text">
+                        <p class="status-text">Waiting for phone to scan...</p>
+                        <div id="syncSpinner" class="spinner" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <div class="sync-steps">
+                    <div class="step">
+                        <span class="step-number">1</span>
+                        <p>Open BudgetTact app on your phone</p>
+                    </div>
+                    <div class="step">
+                        <span class="step-number">2</span>
+                        <p>Tap "Sync to Web" in Settings</p>
+                    </div>
+                    <div class="step">
+                        <span class="step-number">3</span>
+                        <p>Point camera at QR code above</p>
+                    </div>
+                </div>
+
+                <div class="manual-import-option">
+                    <p>Having trouble?</p>
+                    <button id="manualImportBtn" class="btn-secondary">
+                        Manual Import Instead
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div id="view-dashboard" class="view active">
             <div class="view-header">
                 <h2>Dashboard</h2>
@@ -110,21 +162,18 @@
         </div>
     </main>
 
-    <div id="import-modal" class="modal">
+    <div id="manualImportModal" class="modal" style="display: none;">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Import Budget Data</h3>
-                <button id="close-modal" class="btn-close">&times;</button>
+                <h2>Manual Import</h2>
+                <button class="close-btn" id="closeManualImportBtn">&times;</button>
             </div>
             <div class="modal-body">
-                <p>Paste your budget data JSON from the BudgetTact Android app:</p>
-                <textarea id="import-textarea" placeholder='{"version": "1.0", "data": {...}}'></textarea>
+                <p>Paste the JSON data from your Android app:</p>
+                <textarea id="manualImportData" rows="10" placeholder="Paste JSON here..."></textarea>
+                <button id="importBtn" class="btn-primary">Import Data</button>
                 <div id="import-error" class="error-message"></div>
                 <div id="import-success" class="success-message"></div>
-            </div>
-            <div class="modal-footer">
-                <button id="cancel-import" class="btn btn-secondary">Cancel</button>
-                <button id="confirm-import" class="btn btn-primary">Import</button>
             </div>
         </div>
     </div>
@@ -138,9 +187,12 @@
     </footer>
 
     <script src="https://unpkg.com/dexie@3/dist/dexie.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/storage.js"></script>
     <script src="js/sync.js"></script>
+    <script src="js/qr-generator.js"></script>
+    <script src="js/webrtc.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/app.js"></script>
 </body>

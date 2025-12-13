@@ -699,6 +699,254 @@ footer {
   }
 }
 
+/* Header Buttons */
+.header-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+/* Sync Container */
+.sync-container {
+  max-width: 600px;
+  margin: 40px auto;
+  padding: 24px;
+  background: var(--card-bg);
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.sync-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.sync-header h2 {
+  font-size: 28px;
+  margin-bottom: 8px;
+  color: var(--text-color);
+}
+
+.sync-header .instructions {
+  color: #666;
+  font-size: 16px;
+}
+
+/* QR Code Display */
+.qr-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 40px;
+}
+
+.qr-code-display {
+  padding: 24px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  display: inline-block;
+}
+
+/* Make QR code responsive */
+.qr-code-display canvas,
+.qr-code-display img {
+  max-width: 300px;
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Sync Status */
+.sync-status-text {
+  text-align: center;
+}
+
+.status-text {
+  font-size: 18px;
+  color: var(--primary-color);
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+/* Steps */
+.sync-steps {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: #f5f5f5;
+  border-radius: 8px;
+}
+
+.step-number {
+  width: 32px;
+  height: 32px;
+  background: var(--primary-color);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.step p {
+  margin: 0;
+  color: var(--text-color);
+}
+
+/* Manual Import Option */
+.manual-import-option {
+  text-align: center;
+  padding-top: 24px;
+  border-top: 1px solid #eee;
+}
+
+.manual-import-option p {
+  color: #666;
+  margin-bottom: 12px;
+}
+
+/* Buttons */
+.btn-primary {
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  padding: 12px 32px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.3s;
+  width: 100%;
+  margin-top: 12px;
+}
+
+.btn-primary:hover {
+  background: #1976D2;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--primary-color);
+  border: 2px solid var(--primary-color);
+  padding: 10px 32px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.btn-secondary:hover {
+  background: var(--primary-color);
+  color: white;
+}
+
+/* Spinner Animation */
+.spinner {
+  border: 4px solid var(--border-color);
+  border-top: 4px solid var(--primary-color);
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Status Icons */
+.status-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.status-icon.success::before {
+  content: '✓';
+  color: var(--secondary-color);
+}
+
+.status-icon.error::before {
+  content: '✗';
+  color: var(--danger-color);
+}
+
+.status-icon.connecting::before {
+  content: '⟳';
+  color: var(--primary-color);
+}
+
+/* Notifications */
+.notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 16px 24px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 2000;
+  animation: slideIn 0.3s ease-out;
+  display: none;
+}
+
+.notification.success {
+  background: #4CAF50;
+  color: white;
+}
+
+.notification.error {
+  background: #F44336;
+  color: white;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .sync-container {
+    margin: 20px;
+    padding: 16px;
+  }
+
+  .qr-code-display {
+    padding: 16px;
+  }
+
+  .qr-code-display canvas,
+  .qr-code-display img {
+    max-width: 250px;
+  }
+
+  .sync-header h2 {
+    font-size: 24px;
+  }
+
+  .sync-header .instructions {
+    font-size: 14px;
+  }
+}
+
 @media (min-width: 1024px) {
   .card {
     padding: 20px;

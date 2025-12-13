@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budgettact-v1.0.1';
+const CACHE_NAME = 'budgettact-v1.2.0';
 const urlsToCache = [
   './',
   './index.html',
@@ -7,6 +7,8 @@ const urlsToCache = [
   './js/app.js',
   './js/storage.js',
   './js/sync.js',
+  './js/qr-generator.js',
+  './js/webrtc.js',
   './js/ui.js',
   './js/utils.js',
   './assets/icons/icon-192.png',

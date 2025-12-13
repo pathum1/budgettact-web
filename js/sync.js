@@ -313,10 +313,177 @@ const Sync = (() => {
     }
   }
 
+  /**
+   * Import already-parsed sync payload (for WebRTC)
+   * @param {Object} payload - Already parsed sync payload object
+   * @returns {Promise<Object>} { success: boolean, message: string, stats?: Object }
+   */
+  async function importSyncPayload(payload) {
+    try {
+      // Step 1: Validate structure (payload already parsed)
+      const validation = validateSyncPayload(payload);
+
+      if (!validation.valid) {
+        return {
+          success: false,
+          message: 'Data validation failed',
+          errors: validation.errors
+        };
+      }
+
+      // Step 2: Import to IndexedDB
+      try {
+        await Storage.importData(payload);
+      } catch (error) {
+        console.error('Import error:', error);
+        return {
+          success: false,
+          message: 'Failed to save data to database. Please try again.'
+        };
+      }
+
+      // Step 3: Calculate stats
+      const stats = {
+        transactions: payload.data.transactions.length,
+        categories: payload.data.categories.length,
+        goals: payload.data.savingsGoals.length,
+        exportedAt: payload.exportedAt,
+        deviceName: payload.deviceName || 'Unknown Device'
+      };
+
+      return {
+        success: true,
+        message: 'Data synced successfully!',
+        stats
+      };
+    } catch (error) {
+      console.error('Unexpected error during import:', error);
+      return {
+        success: false,
+        message: 'An unexpected error occurred. Please try again.'
+      };
+    }
+  }
+
+  /**
+   * Initialize WebRTC sync with QR code display
+   * Automatically called when sync view is shown
+   */
+  async function initializeWebRTCSync(showStatusCallback, showErrorCallback) {
+    try {
+      // Generate QR code with peer ID
+      const peerId = QRGenerator.init('qrCodeContainer');
+
+      if (!peerId) {
+        throw new Error('Failed to generate QR code');
+      }
+
+      if (showStatusCallback) {
+        showStatusCallback('Waiting for phone to scan...');
+      }
+
+      // Set up data callback - triggered when Android sends sync data
+      WebRTCSync.onData(async (syncData) => {
+        if (showStatusCallback) {
+          showStatusCallback('Receiving data...');
+        }
+
+        try {
+          // Import data using existing function
+          const result = await importSyncPayload(syncData);
+
+          if (result.success) {
+            if (showStatusCallback) {
+              showStatusCallback('✅ Sync complete! Redirecting to dashboard...');
+            }
+
+            // Show success notification
+            Utils.showNotification(
+              `Successfully synced ${result.stats.transactions} transactions, ` +
+              `${result.stats.categories} categories, and ${result.stats.goals} goals!`,
+              'success',
+              4000
+            );
+
+            // Disconnect and navigate to dashboard
+            setTimeout(() => {
+              WebRTCSync.disconnect();
+
+              // Navigate to dashboard instead of full reload
+              window.location.hash = 'dashboard';
+
+              // Reload the page to ensure fresh data is loaded
+              window.location.reload();
+            }, 1500);
+          } else {
+            const errorMsg = result.errors ? result.errors.join(', ') : result.message;
+            if (showErrorCallback) {
+              showErrorCallback('Failed to import data: ' + errorMsg);
+            }
+            WebRTCSync.disconnect();
+          }
+        } catch (err) {
+          console.error('Import error:', err);
+          if (showErrorCallback) {
+            showErrorCallback('Failed to import data: ' + err.message);
+          }
+          WebRTCSync.disconnect();
+        }
+      });
+
+      // Set up state change callback
+      WebRTCSync.onStateChange((state) => {
+        switch (state) {
+          case 'waiting':
+            if (showStatusCallback) {
+              showStatusCallback('Scan QR code with your phone');
+            }
+            break;
+          case 'connected':
+            if (showStatusCallback) {
+              showStatusCallback('Phone connected! Waiting for data...');
+            }
+            break;
+          case 'receiving':
+            if (showStatusCallback) {
+              showStatusCallback('Receiving data...');
+            }
+            break;
+          case 'completed':
+            if (showStatusCallback) {
+              showStatusCallback('Sync complete!');
+            }
+            break;
+          case 'error':
+            if (showErrorCallback) {
+              showErrorCallback('Connection error. Please try again.');
+            }
+            break;
+          case 'expired':
+            if (showErrorCallback) {
+              showErrorCallback('QR code expired. Please refresh the page.');
+            }
+            break;
+        }
+      });
+
+      // Initialize WebRTC with the peer ID
+      await WebRTCSync.init(peerId);
+
+    } catch (err) {
+      console.error('Failed to initialize sync:', err);
+      if (showErrorCallback) {
+        showErrorCallback('Failed to initialize sync: ' + err.message);
+      }
+    }
+  }
+
   // Public API
   return {
     validateSyncPayload,
     importSyncData,
-    getImportStats
+    importSyncPayload,
+    getImportStats,
+    initializeWebRTCSync
   };
 })();
