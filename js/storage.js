@@ -3,6 +3,7 @@ const Storage = (() => {
   const db = new Dexie('BudgetTactDB');
 
   // Define schema
+  // Version 1: Initial schema
   db.version(1).stores({
     metadata: 'key',
     transactions: 'transactionID, transactionDate, transactionCategory, transactionType',
@@ -14,9 +15,122 @@ const Storage = (() => {
     billers: 'billerID'
   });
 
+  // Version 2: Add sync metadata columns for bidirectional sync
+  db.version(2).stores({
+    metadata: 'key',
+    transactions: 'transactionID, transactionDate, transactionCategory, transactionType, updatedAt, deleted',
+    categories: 'id, categoryType, updatedAt, deleted',
+    budgetHistory: '++id, [categoryId+yearMonth], updatedAt, deleted',
+    savingsGoals: 'id, isActive, category, updatedAt, deleted',
+    goalTransactions: '++id, goalId, transactionDate, updatedAt, deleted',
+    recurringTransactions: 'id, transactionID, nextDueDate, status, updatedAt, deleted',
+    billers: 'billerID, updatedAt, deleted'
+  }).upgrade(tx => {
+    // Add default sync metadata to existing records
+    console.log('🔄 Upgrading database to v2: Adding sync metadata...');
+    const now = new Date().toISOString();
+
+    // Update transactions
+    return tx.table('transactions').toCollection().modify(transaction => {
+      if (!transaction.createdAt) transaction.createdAt = now;
+      if (!transaction.updatedAt) transaction.updatedAt = now;
+      if (transaction.deleted === undefined) transaction.deleted = false;
+      if (!transaction.deviceId) transaction.deviceId = 'web';
+    }).then(() => {
+      // Update categories
+      return tx.table('categories').toCollection().modify(category => {
+        if (!category.createdAt) category.createdAt = now;
+        if (!category.updatedAt) category.updatedAt = now;
+        if (category.deleted === undefined) category.deleted = false;
+        if (!category.deviceId) category.deviceId = 'web';
+      });
+    }).then(() => {
+      // Update savingsGoals
+      return tx.table('savingsGoals').toCollection().modify(goal => {
+        if (!goal.createdAt) goal.createdAt = now;
+        if (!goal.updatedAt) goal.updatedAt = now;
+        if (goal.deleted === undefined) goal.deleted = false;
+        if (!goal.deviceId) goal.deviceId = 'web';
+      });
+    }).then(() => {
+      // Update budgetHistory
+      return tx.table('budgetHistory').toCollection().modify(budget => {
+        if (!budget.createdAt) budget.createdAt = now;
+        if (!budget.updatedAt) budget.updatedAt = now;
+        if (budget.deleted === undefined) budget.deleted = false;
+        if (!budget.deviceId) budget.deviceId = 'web';
+      });
+    }).then(() => {
+      // Update goalTransactions
+      return tx.table('goalTransactions').toCollection().modify(goalTx => {
+        if (!goalTx.createdAt) goalTx.createdAt = now;
+        if (!goalTx.updatedAt) goalTx.updatedAt = now;
+        if (goalTx.deleted === undefined) goalTx.deleted = false;
+        if (!goalTx.deviceId) goalTx.deviceId = 'web';
+      });
+    }).then(() => {
+      // Update recurringTransactions
+      return tx.table('recurringTransactions').toCollection().modify(recurring => {
+        if (!recurring.createdAt) recurring.createdAt = now;
+        if (!recurring.updatedAt) recurring.updatedAt = now;
+        if (recurring.deleted === undefined) recurring.deleted = false;
+        if (!recurring.deviceId) recurring.deviceId = 'web';
+      });
+    }).then(() => {
+      // Update billers
+      return tx.table('billers').toCollection().modify(biller => {
+        if (!biller.createdAt) biller.createdAt = now;
+        if (!biller.updatedAt) biller.updatedAt = now;
+        if (biller.deleted === undefined) biller.deleted = false;
+        if (!biller.deviceId) biller.deviceId = 'web';
+      });
+    }).then(() => {
+      console.log('✅ Database upgraded to v2 successfully');
+    });
+  });
+
+  // Version 3: Add sync metadata indexes and deviceId for bidirectional sync
+  db.version(3).stores({
+    metadata: 'key',
+    transactions: 'transactionID, updatedAt, deleted, deviceId, transactionDate, transactionCategory, transactionType',
+    categories: 'id, updatedAt, deleted, deviceId, categoryType',
+    budgetHistory: '++id, [categoryId+yearMonth], updatedAt, deleted, deviceId',
+    savingsGoals: 'id, isActive, category, updatedAt, deleted, deviceId',
+    goalTransactions: '++id, goalId, transactionDate, updatedAt, deleted, deviceId',
+    recurringTransactions: 'id, transactionID, nextDueDate, status, updatedAt, deleted, deviceId',
+    billers: 'billerID, updatedAt, deleted, deviceId'
+  }).upgrade(async (tx) => {
+    const now = Date.now();
+    const normalizeRecord = (record) => {
+      record.createdAt = record.createdAt ? normalizeTimestamp(record.createdAt) : now;
+      record.updatedAt = record.updatedAt ? normalizeTimestamp(record.updatedAt) : now;
+      record.deleted = record.deleted === undefined ? false : Boolean(record.deleted);
+      record.deviceId = record.deviceId || 'web';
+    };
+
+    const normalizeTable = async (tableName) => {
+      await tx.table(tableName).toCollection().modify(normalizeRecord);
+    };
+
+    await normalizeTable('transactions');
+    await normalizeTable('categories');
+    await normalizeTable('budgetHistory');
+    await normalizeTable('savingsGoals');
+    await normalizeTable('goalTransactions');
+    await normalizeTable('recurringTransactions');
+    await normalizeTable('billers');
+  });
+
   /**
    * Initialize database
    */
+  function normalizeTimestamp(value) {
+    if (typeof value === 'number') return value;
+    if (!value) return Date.now();
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? Date.now() : parsed;
+  }
+
   async function initDatabase() {
     try {
       await db.open();
@@ -78,12 +192,128 @@ const Storage = (() => {
         console.log(`✅ Migrated ${migratedCategories} categories`);
       }
 
-      if (migratedGoals === 0 && migratedCategories === 0) {
-        console.log('✅ No migration needed - data already correct');
-      }
+      await normalizeSyncMetadataTables();
+      console.log('✅ Sync metadata normalized');
     } catch (error) {
       console.error('❌ Migration failed:', error);
       // Don't throw - migration failure shouldn't prevent app from working
+    }
+  }
+
+  function ensureSyncMetadata(record, { isDelete = false } = {}) {
+    const now = Date.now();
+    return {
+      ...record,
+      createdAt: record.createdAt ? normalizeTimestamp(record.createdAt) : now,
+      updatedAt: record.updatedAt ? normalizeTimestamp(record.updatedAt) : now,
+      deleted: isDelete ? true : (record.deleted === undefined ? false : Boolean(record.deleted)),
+      deviceId: record.deviceId || PairingManager.getWebPeerId()
+    };
+  }
+
+  const storePrimaryKeys = {
+    transactions: 'transactionID',
+    categories: 'id',
+    budgetHistory: 'id',
+    savingsGoals: 'id',
+    goalTransactions: 'id',
+    recurringTransactions: 'id',
+    billers: 'billerID'
+  };
+
+  async function upsertRecord(storeName, record, { operation = null, queue = true } = {}) {
+    const keyField = storePrimaryKeys[storeName] || 'id';
+    const table = db.table(storeName);
+    const existing = record[keyField] ? await table.get(record[keyField]) : null;
+    const base = existing ? { ...existing, ...record } : record;
+    const withMeta = ensureSyncMetadata(base, { isDelete: base.deleted });
+    await table.put(withMeta);
+    const inferredOperation = operation || (existing ? 'update' : 'insert');
+    if (queue && typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.queueChange(storeName, inferredOperation, withMeta);
+    }
+    return withMeta;
+  }
+
+  async function markDeleted(storeName, id, { queue = true } = {}) {
+    const keyField = storePrimaryKeys[storeName] || 'id';
+    const table = db.table(storeName);
+    const existing = await table.get(id);
+    if (!existing) return null;
+    const updated = ensureSyncMetadata({ ...existing, deleted: true, updatedAt: Date.now() }, { isDelete: true });
+    await table.put(updated);
+    if (queue && typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.queueChange(storeName, 'delete', updated);
+    }
+    return updated;
+  }
+
+  async function getChangedRecords(storeName, sinceTimestamp) {
+    const since = sinceTimestamp || 0;
+    try {
+      return await db.table(storeName)
+        .where('updatedAt')
+        .above(since)
+        .toArray();
+    } catch (error) {
+      console.error(`Failed to get changed records for ${storeName}:`, error);
+      return [];
+    }
+  }
+
+  async function getSyncSnapshot(lastSync) {
+    const since = lastSync || 0;
+    if (!since) {
+      return {
+        lastSyncTimestamp: null,
+        webPeerId: PairingManager.getWebPeerId(),
+        transactions: await db.transactions.toArray(),
+        categories: await db.categories.toArray(),
+        budgetHistory: await db.budgetHistory.toArray(),
+        savingsGoals: await db.savingsGoals.toArray(),
+        goalTransactions: await db.goalTransactions.toArray(),
+        recurringTransactions: await db.recurringTransactions.toArray(),
+        billers: await db.billers.toArray()
+      };
+    }
+
+    return {
+      lastSyncTimestamp: since,
+      webPeerId: PairingManager.getWebPeerId(),
+      transactions: await getChangedRecords('transactions', since),
+      categories: await getChangedRecords('categories', since),
+      budgetHistory: await getChangedRecords('budgetHistory', since),
+      savingsGoals: await getChangedRecords('savingsGoals', since),
+      goalTransactions: await getChangedRecords('goalTransactions', since),
+      recurringTransactions: await getChangedRecords('recurringTransactions', since),
+      billers: await getChangedRecords('billers', since)
+    };
+  }
+
+  async function normalizeSyncMetadataTables() {
+    const tables = [
+      'transactions',
+      'categories',
+      'budgetHistory',
+      'savingsGoals',
+      'goalTransactions',
+      'recurringTransactions',
+      'billers'
+    ];
+
+    const now = Date.now();
+
+    for (const tableName of tables) {
+      try {
+        await db.table(tableName).toCollection().modify((record) => {
+          record.createdAt = record.createdAt ? normalizeTimestamp(record.createdAt) : now;
+          record.updatedAt = record.updatedAt ? normalizeTimestamp(record.updatedAt) : now;
+          record.deleted = record.deleted === undefined ? false : Boolean(record.deleted);
+          record.deviceId = record.deviceId || 'web';
+        });
+      } catch (error) {
+        console.warn(`⚠️ Failed to normalize sync metadata for ${tableName}:`, error);
+      }
     }
   }
 
@@ -129,50 +359,74 @@ const Storage = (() => {
         importedAt: new Date().toISOString()
       });
 
+      // Helper to add sync metadata to records
+      const addSyncMetadata = (record, deviceId) => {
+        const now = Date.now();
+        return {
+          ...record,
+          createdAt: record.createdAt ? normalizeTimestamp(record.createdAt) : now,
+          updatedAt: record.updatedAt ? normalizeTimestamp(record.updatedAt) : now,
+          deleted: record.deleted === undefined ? false : Boolean(record.deleted),
+          deviceId: record.deviceId || deviceId
+        };
+      };
+
       // Import all data tables
       if (data.transactions && data.transactions.length > 0) {
         // Normalize transaction amounts (convert negative to positive)
-        const normalizedTransactions = data.transactions.map(t => ({
+        const normalizedTransactions = data.transactions.map(t => addSyncMetadata({
           ...t,
           transactionAmount: Math.abs(t.transactionAmount)
-        }));
+        }, syncPayload.deviceId));
         await db.transactions.bulkAdd(normalizedTransactions);
       }
 
       if (data.categories && data.categories.length > 0) {
         // Normalize boolean fields (Android sends 1/0, we need true/false)
-        const normalizedCategories = data.categories.map(c => ({
+        const normalizedCategories = data.categories.map(c => addSyncMetadata({
           ...c,
           autoPropagateToNextMonth: Boolean(c.autoPropagateToNextMonth),
           budgetNotificationsEnabled: Boolean(c.budgetNotificationsEnabled || false)
-        }));
+        }, syncPayload.deviceId));
         await db.categories.bulkAdd(normalizedCategories);
       }
 
       if (data.budgetHistory && data.budgetHistory.length > 0) {
-        await db.budgetHistory.bulkAdd(data.budgetHistory);
+        const normalizedBudgetHistory = data.budgetHistory.map(b =>
+          addSyncMetadata(b, syncPayload.deviceId)
+        );
+        await db.budgetHistory.bulkAdd(normalizedBudgetHistory);
       }
 
       if (data.savingsGoals && data.savingsGoals.length > 0) {
         // Normalize boolean fields (Android sends 1/0, we need true/false)
-        const normalizedGoals = data.savingsGoals.map(g => ({
+        const normalizedGoals = data.savingsGoals.map(g => addSyncMetadata({
           ...g,
           isActive: Boolean(g.isActive),
           notificationsEnabled: Boolean(g.notificationsEnabled || false)
-        }));
+        }, syncPayload.deviceId));
         await db.savingsGoals.bulkAdd(normalizedGoals);
       }
 
       if (data.goalTransactions && data.goalTransactions.length > 0) {
-        await db.goalTransactions.bulkAdd(data.goalTransactions);
+        const normalizedGoalTx = data.goalTransactions.map(gt =>
+          addSyncMetadata(gt, syncPayload.deviceId)
+        );
+        await db.goalTransactions.bulkAdd(normalizedGoalTx);
       }
 
       if (data.recurringTransactions && data.recurringTransactions.length > 0) {
-        await db.recurringTransactions.bulkAdd(data.recurringTransactions);
+        const normalizedRecurring = data.recurringTransactions.map(rt =>
+          addSyncMetadata(rt, syncPayload.deviceId)
+        );
+        await db.recurringTransactions.bulkAdd(normalizedRecurring);
       }
 
       if (data.billers && data.billers.length > 0) {
-        await db.billers.bulkAdd(data.billers);
+        const normalizedBillers = data.billers.map(b =>
+          addSyncMetadata(b, syncPayload.deviceId)
+        );
+        await db.billers.bulkAdd(normalizedBillers);
       }
 
       console.log('Data imported successfully');
@@ -432,6 +686,11 @@ const Storage = (() => {
     getGoalTransactions,
     getCategorySpent,
     getAllBillers,
-    getRecurringTransactions
+    getRecurringTransactions,
+    ensureSyncMetadata,
+    upsertRecord,
+    markDeleted,
+    getChangedRecords,
+    getSyncSnapshot
   };
 })();

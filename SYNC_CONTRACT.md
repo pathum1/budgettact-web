@@ -57,7 +57,7 @@ This document defines the JSON data format for syncing between BudgetTact Androi
 - `merchantName`: String, required
 - `transactionDate`: String, ISO 8601 DateTime format
 - `transactionType`: String, enum ["expense", "income"]
-- `transactionAmount`: Number (double), always positive (negative values auto-converted during import)
+- `transactionAmount`: Number (double), always positive
 - `transactionCategory`: Integer, foreign key to Category ID
 - `currency`: String, 3-letter ISO currency code (default: "USD")
 

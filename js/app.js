@@ -15,6 +15,10 @@
       return;
     }
 
+    if (typeof syncStatus !== 'undefined') {
+      syncStatus.init();
+    }
+
     // Register service worker
     registerServiceWorker();
 
@@ -23,9 +27,31 @@
     setupSyncButton();
     setupFilters();
 
-    // Load initial view
-    const hash = window.location.hash.slice(1) || 'dashboard';
-    await navigateToView(hash);
+    // Check if first-time user (no data and not paired)
+    const hasData = await Storage.hasData();
+    const isPaired = PairingManager.isPaired();
+
+    console.log('🔍 First-time user check:', { hasData, isPaired });
+
+    // Determine initial view
+    let initialView;
+    if (!hasData && !isPaired) {
+      // First-time user - show QR code for initial sync
+      console.log('👋 First-time user detected - showing sync view');
+      initialView = 'sync';
+      document.body.classList.add('landing-mode');
+    } else {
+      // Returning user - show requested view or dashboard
+      initialView = window.location.hash.slice(1) || 'dashboard';
+      document.body.classList.remove('landing-mode');
+    }
+
+    await navigateToView(initialView);
+
+    // Auto sync on load if already paired
+    if (typeof AutoSyncOnLoad !== 'undefined') {
+      AutoSyncOnLoad.init();
+    }
 
     // Update sync status
     UI.updateSyncStatus();
@@ -351,6 +377,16 @@
   } else {
     init();
   }
+
+  // Re-render when data changes (e.g., after sync)
+  window.addEventListener('data-updated', async () => {
+    if (currentView) {
+      await renderCurrentView();
+    }
+    if (typeof syncStatus !== 'undefined') {
+      syncStatus.updateLastSyncTime();
+    }
+  });
 
   // Check for updates periodically
   setInterval(checkForUpdates, 60000); // Check every minute

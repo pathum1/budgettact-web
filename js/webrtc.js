@@ -13,6 +13,7 @@ const WebRTCSync = (() => {
   let myPeerId = null;
   let remotePeerId = null;
   let connectionTimeout = null;
+  const listeners = {};
 
   // PeerJS signaling server configuration
   const SIGNALING_SERVER = 'wss://0.peerjs.com/peerjs';
@@ -268,6 +269,7 @@ const WebRTCSync = (() => {
     dataChannel.onopen = () => {
       console.log('✅ [DataChannel] Opened!');
       updateState('connected');
+      emit('connection-established');
 
       // Clear expiration timeout
       if (connectionTimeout) {
@@ -281,6 +283,10 @@ const WebRTCSync = (() => {
       try {
         const message = JSON.parse(event.data);
         handleIncomingData(message);
+        emit('message', message);
+        if (message.type) {
+          emit(`message:${message.type}`, message);
+        }
       } catch (err) {
         console.error('❌ [DataChannel] Failed to parse data:', err);
       }
@@ -328,6 +334,12 @@ const WebRTCSync = (() => {
       case 'ping':
         console.log('🏓 Received ping, sending pong');
         sendPong();
+        break;
+
+      case 'changes':
+      case 'incrementalChange':
+      case 'syncComplete':
+        // Handled by incremental sync listeners
         break;
 
       default:
@@ -392,6 +404,7 @@ const WebRTCSync = (() => {
     if (onStateChangeCallback) {
       onStateChangeCallback(state);
     }
+    emit('state', state);
   };
 
   /**
@@ -448,11 +461,66 @@ const WebRTCSync = (() => {
     onStateChangeCallback = callback;
   };
 
+  const send = async (payload) => {
+    if (dataChannel?.readyState !== 'open') {
+      throw new Error('Data channel is not open');
+    }
+    dataChannel.send(JSON.stringify(payload));
+  };
+
+  const waitForMessage = (type, timeout = 15000) => {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off(`message:${type}`, handler);
+        reject(new Error(`Timed out waiting for message type ${type}`));
+      }, timeout);
+
+      const handler = (message) => {
+        clearTimeout(timer);
+        off(`message:${type}`, handler);
+        resolve(message);
+      };
+
+      on(`message:${type}`, handler);
+    });
+  };
+
+  const isConnected = () => dataChannel?.readyState === 'open';
+
+  function on(event, callback) {
+    if (!listeners[event]) listeners[event] = [];
+    listeners[event].push(callback);
+  }
+
+  function once(event, callback) {
+    const wrapper = (data) => {
+      off(event, wrapper);
+      callback(data);
+    };
+    on(event, wrapper);
+  }
+
+  function off(event, callback) {
+    if (!listeners[event]) return;
+    listeners[event] = listeners[event].filter(cb => cb !== callback);
+  }
+
+  function emit(event, data) {
+    if (!listeners[event]) return;
+    listeners[event].forEach(cb => cb(data));
+  }
+
   // Public API
   return {
     init,
     disconnect,
     onData,
-    onStateChange
+    onStateChange,
+    send,
+    waitForMessage,
+    on,
+    once,
+    off,
+    isConnected
   };
 })();

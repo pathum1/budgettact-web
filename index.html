@@ -10,6 +10,7 @@
 
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/sync-status.css">
 
     <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="assets/icons/icon-512.png">
@@ -72,44 +73,66 @@
 
     <main>
         <div id="view-sync" class="view">
-            <div class="sync-container">
-                <div class="sync-header">
-                    <h2>Sync with Phone</h2>
-                    <p class="instructions">
-                        Scan this QR code with your BudgetTact Android app to sync your data
-                    </p>
-                </div>
-
-                <div class="qr-wrapper">
-                    <div id="qrCodeContainer" class="qr-code-display">
-                        <!-- QR code will be generated here -->
-                    </div>
-                    <div id="syncStatus" class="sync-status-text">
-                        <p class="status-text">Waiting for phone to scan...</p>
-                        <div id="syncSpinner" class="spinner" style="display: none;"></div>
-                    </div>
-                </div>
-
-                <div class="sync-steps">
-                    <div class="step">
-                        <span class="step-number">1</span>
-                        <p>Open BudgetTact app on your phone</p>
-                    </div>
-                    <div class="step">
-                        <span class="step-number">2</span>
-                        <p>Tap "Sync to Web" in Settings</p>
-                    </div>
-                    <div class="step">
-                        <span class="step-number">3</span>
-                        <p>Point camera at QR code above</p>
-                    </div>
-                </div>
-
-                <div class="manual-import-option">
-                    <p>Having trouble?</p>
-                    <button id="manualImportBtn" class="btn-secondary">
-                        Manual Import Instead
-                    </button>
+            <div class="landing-wrapper">
+                <div class="landing-grid">
+                    <section class="hero-panel">
+                        <div class="pill">Peer-to-peer • Offline-first</div>
+                        <h2>Take control of your budget</h2>
+                        <p class="hero-lead">Sync securely with your phone using WebRTC. Your data never leaves your devices.</p>
+                        <div class="hero-highlights">
+                            <div class="highlight">
+                                <span class="highlight-dot"></span>
+                                <div>
+                                    <h3>Private by default</h3>
+                                    <p>Direct phone-to-web connection. No servers, no trackers.</p>
+                                </div>
+                            </div>
+                            <div class="highlight">
+                                <span class="highlight-dot"></span>
+                                <div>
+                                    <h3>Ready in seconds</h3>
+                                    <p>Open BudgetTact on Android, tap "Sync to Web", then scan.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="sync-panel">
+                        <div class="sync-card">
+                            <div class="card-header">
+                                <div>
+                                    <p class="eyebrow">Sync with your phone</p>
+                                    <h3>Scan the QR to pair</h3>
+                                </div>
+                            </div>
+                            <div class="qr-and-status">
+                                <div id="qrCodeContainer" class="qr-code-display">
+                                    <!-- QR code will be generated here -->
+                                </div>
+                                <div id="syncStatus" class="sync-status-text">
+                                    <p class="status-text">Waiting for phone to scan...</p>
+                                    <div id="syncSpinner" class="spinner" style="display: none;"></div>
+                                </div>
+                            </div>
+                            <div class="sync-steps">
+                                <div class="step">
+                                    <span class="step-number">1</span>
+                                    <p>Open BudgetTact on Android</p>
+                                </div>
+                                <div class="step">
+                                    <span class="step-number">2</span>
+                                    <p>Tap "Sync to Web" in Settings</p>
+                                </div>
+                                <div class="step">
+                                    <span class="step-number">3</span>
+                                    <p>Point camera at the QR to pair</p>
+                                </div>
+                            </div>
+                            <div class="manual-import-option">
+                                <span>Prefer manual import?</span>
+                                <button id="manualImportBtn" class="btn-text">Import JSON instead</button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
         </div>
@@ -180,19 +203,18 @@
 
     <div id="notification" class="notification"></div>
 
-    <footer>
-        <div id="sync-status" class="sync-status">
-            No data loaded
-        </div>
-    </footer>
-
     <script src="https://unpkg.com/dexie@3/dist/dexie.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="js/utils.js"></script>
+    <script src="js/pairing-manager.js"></script>
     <script src="js/storage.js"></script>
+    <script src="js/sync-status-manager.js"></script>
+    <script src="js/incremental-sync-manager.js"></script>
+    <script src="js/webrtc.js"></script>
+    <script src="js/auto-sync-on-crud.js"></script>
+    <script src="js/auto-sync-on-load.js"></script>
     <script src="js/sync.js"></script>
     <script src="js/qr-generator.js"></script>
-    <script src="js/webrtc.js"></script>
     <script src="js/ui.js"></script>
     <script src="js/app.js"></script>
 </body>

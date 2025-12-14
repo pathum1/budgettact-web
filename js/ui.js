@@ -380,11 +380,20 @@ const UI = (() => {
    * Update sync status footer
    */
   async function updateSyncStatus() {
-    const statusElement = document.getElementById('sync-status');
-    if (!statusElement) return;
-
     try {
       const metadata = await Storage.getMetadata();
+      if (typeof syncStatus !== 'undefined' && syncStatus.statusElement) {
+        if (metadata?.exportedAt) {
+          const exportDate = Utils.formatDate(metadata.exportedAt, 'time');
+          syncStatus.setDetailsMessage(`Last synced: ${exportDate}`);
+        } else {
+          syncStatus.updateLastSyncTime();
+        }
+        return;
+      }
+
+      const statusElement = document.getElementById('sync-status');
+      if (!statusElement) return;
 
       if (!metadata) {
         statusElement.textContent = 'No data loaded';
@@ -395,7 +404,10 @@ const UI = (() => {
       statusElement.textContent = `Last synced: ${exportDate} from ${metadata.deviceName}`;
     } catch (error) {
       console.error('Failed to update sync status:', error);
-      statusElement.textContent = 'Sync status unavailable';
+      const statusElement = document.getElementById('sync-status');
+      if (statusElement) {
+        statusElement.textContent = 'Sync status unavailable';
+      }
     }
   }
 

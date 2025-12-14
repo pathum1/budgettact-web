@@ -397,6 +397,13 @@ const Sync = (() => {
               showStatusCallback('✅ Sync complete! Redirecting to dashboard...');
             }
 
+            // Save pairing information
+            PairingManager.savePairing(
+              syncData.deviceId,
+              syncData.deviceName || 'Android Device'
+            );
+            console.log('✅ Device paired successfully');
+
             // Show success notification
             Utils.showNotification(
               `Successfully synced ${result.stats.transactions} transactions, ` +
