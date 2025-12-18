@@ -121,6 +121,22 @@ const Storage = (() => {
     await normalizeTable('billers');
   });
 
+  // Version 4: Add data_hash field for hash-based sync verification
+  db.version(4).stores({
+    metadata: 'key',
+    transactions: 'transactionID, updatedAt, deleted, deviceId, data_hash, transactionDate, transactionCategory, transactionType',
+    categories: 'id, updatedAt, deleted, deviceId, data_hash, categoryType',
+    budgetHistory: '++id, [categoryId+yearMonth], updatedAt, deleted, deviceId, data_hash',
+    savingsGoals: 'id, isActive, category, updatedAt, deleted, deviceId, data_hash',
+    goalTransactions: '++id, goalId, transactionDate, updatedAt, deleted, deviceId, data_hash',
+    recurringTransactions: 'id, transactionID, nextDueDate, status, updatedAt, deleted, deviceId, data_hash',
+    billers: 'billerID, updatedAt, deleted, deviceId, data_hash'
+  }).upgrade(async (tx) => {
+    console.log('🔄 Upgrading database to v4: Adding data_hash fields...');
+    console.log('ℹ️ Existing data will have hashes computed on next sync or CRUD operation');
+    console.log('✅ Database upgraded to v4 successfully');
+  });
+
   /**
    * Initialize database
    */
@@ -207,7 +223,8 @@ const Storage = (() => {
       createdAt: record.createdAt ? normalizeTimestamp(record.createdAt) : now,
       updatedAt: record.updatedAt ? normalizeTimestamp(record.updatedAt) : now,
       deleted: isDelete ? true : (record.deleted === undefined ? false : Boolean(record.deleted)),
-      deviceId: record.deviceId || PairingManager.getWebPeerId()
+      deviceId: record.deviceId || PairingManager.getWebPeerId(),
+      // data_hash will be computed separately in upsertRecord
     };
   }
 
@@ -227,6 +244,20 @@ const Storage = (() => {
     const existing = record[keyField] ? await table.get(record[keyField]) : null;
     const base = existing ? { ...existing, ...record } : record;
     const withMeta = ensureSyncMetadata(base, { isDelete: base.deleted });
+
+    // Compute hash before saving (if DataHashService is available)
+    if (typeof DataHashService !== 'undefined') {
+      try {
+        const hash = await DataHashService.computeHashForEntity(storeName, withMeta);
+        if (hash) {
+          withMeta.data_hash = hash;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Failed to compute hash for ${storeName}:`, error);
+        // Continue without hash - it will be computed on next sync
+      }
+    }
+
     await table.put(withMeta);
     const inferredOperation = operation || (existing ? 'update' : 'insert');
     if (queue && typeof autoSyncCRUD !== 'undefined') {
@@ -241,6 +272,19 @@ const Storage = (() => {
     const existing = await table.get(id);
     if (!existing) return null;
     const updated = ensureSyncMetadata({ ...existing, deleted: true, updatedAt: Date.now() }, { isDelete: true });
+
+    // Compute hash for deleted record (if DataHashService is available)
+    if (typeof DataHashService !== 'undefined') {
+      try {
+        const hash = await DataHashService.computeHashForEntity(storeName, updated);
+        if (hash) {
+          updated.data_hash = hash;
+        }
+      } catch (error) {
+        console.warn(`⚠️ Failed to compute hash for ${storeName}:`, error);
+      }
+    }
+
     await table.put(updated);
     if (queue && typeof autoSyncCRUD !== 'undefined') {
       autoSyncCRUD.queueChange(storeName, 'delete', updated);
@@ -343,12 +387,26 @@ const Storage = (() => {
    */
   async function importData(syncPayload) {
     try {
+      console.log('📥 Starting data import...', {
+        version: syncPayload.version,
+        deviceId: syncPayload.deviceId,
+        deviceName: syncPayload.deviceName,
+        hasData: !!syncPayload.data
+      });
+
       // Clear existing data
+      console.log('🗑️ Clearing existing data...');
       await clearAllData();
+      console.log('✅ Existing data cleared');
 
       const { data } = syncPayload;
 
+      if (!data) {
+        throw new Error('Sync payload missing data object');
+      }
+
       // Store metadata
+      console.log('💾 Storing metadata...');
       await db.metadata.put({
         key: 'lastSync',
         exportedAt: syncPayload.exportedAt,
@@ -358,6 +416,7 @@ const Storage = (() => {
         version: syncPayload.version,
         importedAt: new Date().toISOString()
       });
+      console.log('✅ Metadata stored');
 
       // Helper to add sync metadata to records
       const addSyncMetadata = (record, deviceId) => {
@@ -367,38 +426,57 @@ const Storage = (() => {
           createdAt: record.createdAt ? normalizeTimestamp(record.createdAt) : now,
           updatedAt: record.updatedAt ? normalizeTimestamp(record.updatedAt) : now,
           deleted: record.deleted === undefined ? false : Boolean(record.deleted),
-          deviceId: record.deviceId || deviceId
+          deviceId: record.deviceId || deviceId,
+          // Keep data_hash if provided by Android, otherwise it will be computed later
+          data_hash: record.data_hash || null
         };
       };
 
-      // Import all data tables
+      // Import all data tables with detailed logging
+      console.log('📦 Importing data tables...');
+
       if (data.transactions && data.transactions.length > 0) {
+        console.log(`💾 Importing ${data.transactions.length} transactions...`);
         // Normalize transaction amounts (convert negative to positive)
         const normalizedTransactions = data.transactions.map(t => addSyncMetadata({
           ...t,
           transactionAmount: Math.abs(t.transactionAmount)
         }, syncPayload.deviceId));
         await db.transactions.bulkAdd(normalizedTransactions);
+        console.log(`✅ Imported ${data.transactions.length} transactions`);
+      } else {
+        console.log('ℹ️ No transactions to import');
       }
 
       if (data.categories && data.categories.length > 0) {
+        console.log(`💾 Importing ${data.categories.length} categories...`);
         // Normalize boolean fields (Android sends 1/0, we need true/false)
+        // Normalize field names (Android sends 'ID' uppercase, web expects 'id' lowercase)
         const normalizedCategories = data.categories.map(c => addSyncMetadata({
           ...c,
+          id: c.id || c.ID,  // Normalize ID field name
           autoPropagateToNextMonth: Boolean(c.autoPropagateToNextMonth),
           budgetNotificationsEnabled: Boolean(c.budgetNotificationsEnabled || false)
         }, syncPayload.deviceId));
         await db.categories.bulkAdd(normalizedCategories);
+        console.log(`✅ Imported ${data.categories.length} categories`);
+      } else {
+        console.log('ℹ️ No categories to import');
       }
 
       if (data.budgetHistory && data.budgetHistory.length > 0) {
+        console.log(`💾 Importing ${data.budgetHistory.length} budget history records...`);
         const normalizedBudgetHistory = data.budgetHistory.map(b =>
           addSyncMetadata(b, syncPayload.deviceId)
         );
         await db.budgetHistory.bulkAdd(normalizedBudgetHistory);
+        console.log(`✅ Imported ${data.budgetHistory.length} budget history records`);
+      } else {
+        console.log('ℹ️ No budget history to import');
       }
 
       if (data.savingsGoals && data.savingsGoals.length > 0) {
+        console.log(`💾 Importing ${data.savingsGoals.length} savings goals...`);
         // Normalize boolean fields (Android sends 1/0, we need true/false)
         const normalizedGoals = data.savingsGoals.map(g => addSyncMetadata({
           ...g,
@@ -406,33 +484,63 @@ const Storage = (() => {
           notificationsEnabled: Boolean(g.notificationsEnabled || false)
         }, syncPayload.deviceId));
         await db.savingsGoals.bulkAdd(normalizedGoals);
+        console.log(`✅ Imported ${data.savingsGoals.length} savings goals`);
+      } else {
+        console.log('ℹ️ No savings goals to import');
       }
 
       if (data.goalTransactions && data.goalTransactions.length > 0) {
+        console.log(`💾 Importing ${data.goalTransactions.length} goal transactions...`);
         const normalizedGoalTx = data.goalTransactions.map(gt =>
           addSyncMetadata(gt, syncPayload.deviceId)
         );
         await db.goalTransactions.bulkAdd(normalizedGoalTx);
+        console.log(`✅ Imported ${data.goalTransactions.length} goal transactions`);
+      } else {
+        console.log('ℹ️ No goal transactions to import');
       }
 
       if (data.recurringTransactions && data.recurringTransactions.length > 0) {
+        console.log(`💾 Importing ${data.recurringTransactions.length} recurring transactions...`);
         const normalizedRecurring = data.recurringTransactions.map(rt =>
           addSyncMetadata(rt, syncPayload.deviceId)
         );
         await db.recurringTransactions.bulkAdd(normalizedRecurring);
+        console.log(`✅ Imported ${data.recurringTransactions.length} recurring transactions`);
+      } else {
+        console.log('ℹ️ No recurring transactions to import');
       }
 
       if (data.billers && data.billers.length > 0) {
+        console.log(`💾 Importing ${data.billers.length} billers...`);
         const normalizedBillers = data.billers.map(b =>
           addSyncMetadata(b, syncPayload.deviceId)
         );
         await db.billers.bulkAdd(normalizedBillers);
+        console.log(`✅ Imported ${data.billers.length} billers`);
+      } else {
+        console.log('ℹ️ No billers to import');
       }
 
-      console.log('Data imported successfully');
+      console.log('✅ Data imported successfully');
       return true;
     } catch (error) {
-      console.error('Failed to import data:', error);
+      console.error('❌ Failed to import data:', error);
+      console.error('❌ Error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+
+      // Provide more context about which operation failed
+      if (error.name === 'ConstraintError') {
+        console.error('❌ Database constraint violation - possible duplicate key');
+      } else if (error.name === 'DataError') {
+        console.error('❌ Invalid data provided to database');
+      } else if (error.name === 'QuotaExceededError') {
+        console.error('❌ Storage quota exceeded');
+      }
+
       throw error;
     }
   }

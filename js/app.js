@@ -27,26 +27,67 @@
     setupSyncButton();
     setupFilters();
 
-    // Check if first-time user (no data and not paired)
+    // Check sync state and data
     const hasData = await Storage.hasData();
     const isPaired = PairingManager.isPaired();
+    const lastSync = PairingManager.getLastSyncTime();
+    const metadata = await Storage.getMetadata();
 
-    console.log('🔍 First-time user check:', { hasData, isPaired });
+    console.log('🔍 Sync state check:', {
+      hasData,
+      isPaired,
+      lastSync,
+      lastSyncDate: lastSync ? new Date(lastSync).toLocaleDateString() : 'Never',
+      currency: metadata?.currency || 'Not set'
+    });
 
-    // Determine initial view
+    // Determine initial view based on requirements
     let initialView;
-    if (!hasData && !isPaired) {
-      // First-time user - show QR code for initial sync
-      console.log('👋 First-time user detected - showing sync view');
+    let shouldShowSyncPrompt = false;
+
+    if (!isPaired && !hasData) {
+      // Never synced and no data - initial sync needed
+      console.log('👋 First-time user - showing sync view for initial sync');
       initialView = 'sync';
       document.body.classList.add('landing-mode');
+    } else if (isPaired && !hasData) {
+      // Paired before but no data - initial sync needed
+      console.log('🔄 Paired but no data - showing sync view for initial sync');
+      initialView = 'sync';
+      document.body.classList.add('landing-mode');
+    } else if (isPaired && hasData) {
+      // Has synced before and has data - show dashboard
+      console.log('📊 Returning user with data - showing dashboard');
+      initialView = 'dashboard';
+      document.body.classList.remove('landing-mode');
+
+      // Check if sync is old (> 1 day)
+      const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
+      if (lastSync && lastSync < oneDayAgo) {
+        shouldShowSyncPrompt = true;
+        const daysSinceSync = Math.floor((Date.now() - lastSync) / (24 * 60 * 60 * 1000));
+        console.log(`⚠️ Sync is ${daysSinceSync} days old - will prompt to sync`);
+      }
     } else {
-      // Returning user - show requested view or dashboard
-      initialView = window.location.hash.slice(1) || 'dashboard';
+      // Default to dashboard for any other case
+      console.log('📊 Default - showing dashboard');
+      initialView = 'dashboard';
       document.body.classList.remove('landing-mode');
     }
 
     await navigateToView(initialView);
+
+    // Show sync prompt if needed (after dashboard loads)
+    if (shouldShowSyncPrompt && typeof Utils !== 'undefined' && Utils.showNotification) {
+      setTimeout(() => {
+        const lastSyncDate = new Date(lastSync).toLocaleDateString();
+        Utils.showNotification(
+          `Data was last synced on ${lastSyncDate}. Consider syncing for latest changes.`,
+          'info',
+          8000
+        );
+      }, 2000);
+    }
 
     // Auto sync on load if already paired
     if (typeof AutoSyncOnLoad !== 'undefined') {
@@ -110,6 +151,12 @@
     }
 
     console.log('Navigating to view:', viewName);
+
+    // If navigating to a data view (not sync), ensure sidebar is visible
+    // This fixes the issue where auto-refresh shows dashboard without sidebar
+    if (viewName !== 'sync') {
+      document.body.classList.remove('landing-mode');
+    }
 
     // Update active nav item
     document.querySelectorAll('.nav-item').forEach(item => {
