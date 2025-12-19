@@ -18,7 +18,16 @@
 <body>
     <header>
         <div class="header-content">
-            <h1>BudgetTact</h1>
+            <div class="header-left">
+                <button id="sidebar-toggle" class="btn-icon" title="Toggle Sidebar">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <h1>BudgetTact</h1>
+            </div>
             <div class="header-buttons">
                 <button id="sync-btn" class="btn-icon" title="Sync with Phone">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -38,7 +47,7 @@
         </div>
     </header>
 
-    <nav class="nav-bottom">
+    <nav class="sidebar" id="sidebar">
         <a href="#dashboard" class="nav-item active" data-view="dashboard">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="7" height="7"></rect>
@@ -205,6 +214,7 @@
 
     <script src="https://unpkg.com/dexie@3/dist/dexie.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="js/utils.js"></script>
     <script src="js/pairing-manager.js"></script>
     <script src="js/hash-service.js"></script>

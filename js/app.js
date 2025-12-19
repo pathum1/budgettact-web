@@ -123,6 +123,25 @@
    * Set up navigation event listeners
    */
   function setupNavigation() {
+    // Sidebar toggle button
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    const sidebar = document.getElementById('sidebar');
+
+    if (sidebarToggle && sidebar) {
+      sidebarToggle.addEventListener('click', () => {
+        sidebar.classList.toggle('collapsed');
+        // Save preference to localStorage
+        const isCollapsed = sidebar.classList.contains('collapsed');
+        localStorage.setItem('sidebar-collapsed', isCollapsed);
+      });
+
+      // Restore sidebar state from localStorage
+      const savedState = localStorage.getItem('sidebar-collapsed');
+      if (savedState === 'true') {
+        sidebar.classList.add('collapsed');
+      }
+    }
+
     // Navigation clicks
     const navItems = document.querySelectorAll('.nav-item');
     navItems.forEach(item => {
@@ -130,6 +149,11 @@
         e.preventDefault();
         const view = item.dataset.view;
         await navigateToView(view);
+
+        // On mobile, close sidebar after navigation
+        if (window.innerWidth <= 768 && sidebar) {
+          sidebar.classList.add('collapsed');
+        }
       });
     });
 

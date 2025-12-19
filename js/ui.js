@@ -32,47 +32,55 @@ const UI = (() => {
       ]);
 
       // Calculate stats
-      const totalBudget = categories.reduce((sum, c) => sum + c.budgetAmount, 0);
       const totalSpent = transactions
         .filter(t => t.transactionType === 'expense')
         .reduce((sum, t) => sum + t.transactionAmount, 0);
-      const totalIncome = transactions
-        .filter(t => t.transactionType === 'income')
-        .reduce((sum, t) => sum + t.transactionAmount, 0);
-      const remaining = totalBudget - totalSpent;
 
       const currency = metadata?.currency || 'USD';
 
+      // Calculate category data for doughnut chart
+      const categoriesWithSpent = await Promise.all(
+        categories.map(async (category) => {
+          const spent = await Storage.getCategorySpent(category.id, currentMonth);
+          return {
+            ...category,
+            spent,
+            budgetAmount: category.budgetAmount || 0
+          };
+        })
+      );
+
       let html = `
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-label">Budget</div>
-            <div class="stat-value">${Utils.formatCurrency(totalBudget, currency)}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Spent</div>
-            <div class="stat-value negative">${Utils.formatCurrency(totalSpent, currency)}</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Remaining</div>
-            <div class="stat-value ${remaining >= 0 ? 'positive' : 'negative'}">
-              ${Utils.formatCurrency(remaining, currency)}
+        <div class="dashboard-grid">
+          <div class="dashboard-card">
+            <div class="card-title-section">
+              <h3>Total Spent</h3>
+            </div>
+            <div class="card-amount">${Utils.formatCurrency(totalSpent, currency)}</div>
+            <div class="chart-container">
+              <canvas id="spendingChart"></canvas>
             </div>
           </div>
-          <div class="stat-card">
-            <div class="stat-label">Income</div>
-            <div class="stat-value positive">${Utils.formatCurrency(totalIncome, currency)}</div>
+
+          <div class="dashboard-card">
+            <div class="card-title-section">
+              <h3>Category Budget Overview</h3>
+            </div>
+            <div class="chart-container doughnut">
+              <canvas id="categoryChart"></canvas>
+            </div>
+            <div class="category-legend" id="categoryLegend"></div>
           </div>
         </div>
 
-        <div class="card">
+        <div class="full-width-card">
           <div class="card-header">
             <h3 class="card-title">Recent Transactions</h3>
           </div>
           ${renderTransactionsList(transactions.slice(0, 10), categories, currency)}
         </div>
 
-        <div class="card">
+        <div class="full-width-card">
           <div class="card-header">
             <h3 class="card-title">Active Goals</h3>
           </div>
@@ -81,9 +89,240 @@ const UI = (() => {
       `;
 
       container.innerHTML = html;
+
+      // Render charts after DOM is updated
+      setTimeout(() => {
+        renderSpendingLineChart(transactions, currency);
+        renderCategoryDoughnutChart(categoriesWithSpent, currency);
+      }, 100);
+
     } catch (error) {
       console.error('Failed to render dashboard:', error);
       container.innerHTML = renderErrorState('Failed to load dashboard');
+    }
+  }
+
+  /**
+   * Render spending line chart with gradient
+   */
+  function renderSpendingLineChart(transactions, currency) {
+    const canvas = document.getElementById('spendingChart');
+    if (!canvas) return;
+
+    // Destroy existing chart if any
+    if (canvas.chart) {
+      canvas.chart.destroy();
+    }
+
+    // Get expense transactions only
+    const expenses = transactions.filter(t => t.transactionType === 'expense');
+
+    // Sort by date
+    expenses.sort((a, b) => new Date(a.transactionDate) - new Date(b.transactionDate));
+
+    // Group by day and calculate cumulative spending
+    const dailySpending = {};
+    let cumulative = 0;
+
+    expenses.forEach(t => {
+      const date = new Date(t.transactionDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      if (!dailySpending[date]) {
+        dailySpending[date] = 0;
+      }
+      dailySpending[date] += t.transactionAmount;
+    });
+
+    const labels = Object.keys(dailySpending);
+    const data = labels.map(label => {
+      cumulative += dailySpending[label];
+      return cumulative;
+    });
+
+    const ctx = canvas.getContext('2d');
+
+    // Create gradient
+    const gradient = ctx.createLinearGradient(0, 0, 0, 200);
+    gradient.addColorStop(0, 'rgba(110, 97, 239, 0.4)');
+    gradient.addColorStop(1, 'rgba(110, 97, 239, 0.01)');
+
+    canvas.chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Cumulative Spending',
+          data: data,
+          borderColor: '#6E61EF',
+          backgroundColor: gradient,
+          borderWidth: 3,
+          fill: true,
+          tension: 0.4,
+          pointRadius: 4,
+          pointBackgroundColor: '#6E61EF',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          pointHoverRadius: 6
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            backgroundColor: 'rgba(43, 41, 48, 0.95)',
+            titleColor: '#e6e1e6',
+            bodyColor: '#e6e1e6',
+            borderColor: '#6E61EF',
+            borderWidth: 1,
+            padding: 12,
+            displayColors: false,
+            callbacks: {
+              label: function(context) {
+                return 'Total: ' + Utils.formatCurrency(context.parsed.y, currency);
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grid: {
+              color: 'rgba(148, 143, 153, 0.1)',
+              drawBorder: false
+            },
+            ticks: {
+              color: '#cac4cf',
+              callback: function(value) {
+                return Utils.formatCurrency(value, currency);
+              }
+            }
+          },
+          x: {
+            grid: {
+              display: false,
+              drawBorder: false
+            },
+            ticks: {
+              color: '#cac4cf',
+              maxRotation: 45,
+              minRotation: 45
+            }
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Render category doughnut chart
+   */
+  function renderCategoryDoughnutChart(categories, currency) {
+    const canvas = document.getElementById('categoryChart');
+    const legendContainer = document.getElementById('categoryLegend');
+    if (!canvas) return;
+
+    // Destroy existing chart if any
+    if (canvas.chart) {
+      canvas.chart.destroy();
+    }
+
+    // Filter out categories with no budget or spending
+    const validCategories = categories.filter(c => c.budgetAmount > 0 || c.spent > 0);
+
+    if (validCategories.length === 0) {
+      canvas.parentElement.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 40px;">No category data available</p>';
+      return;
+    }
+
+    // Generate vibrant, distinct colors for each category
+    const colors = [
+      '#6E61EF', // Primary purple
+      '#59d666', // Success green
+      '#ff6b6b', // Danger red
+      '#ff9800', // Warning orange
+      '#2196F3', // Blue
+      '#e91e63', // Pink
+      '#00bcd4', // Cyan
+      '#9c27b0', // Purple
+      '#4caf50', // Green
+      '#ff5722', // Deep orange
+      '#795548', // Brown
+      '#607d8b'  // Blue grey
+    ];
+
+    const labels = validCategories.map(c => c.categoryType);
+    const budgetData = validCategories.map(c => c.budgetAmount);
+    const spentData = validCategories.map(c => c.spent);
+    const chartColors = validCategories.map((_, i) => colors[i % colors.length]);
+
+    const ctx = canvas.getContext('2d');
+
+    // Create combined data (budget + spent)
+    const combinedData = validCategories.map(c => c.budgetAmount + c.spent);
+
+    canvas.chart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: combinedData,
+          backgroundColor: chartColors,
+          borderColor: '#2b2930',
+          borderWidth: 3,
+          hoverOffset: 10
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '65%',
+        plugins: {
+          legend: {
+            display: false
+          },
+          tooltip: {
+            backgroundColor: 'rgba(43, 41, 48, 0.95)',
+            titleColor: '#e6e1e6',
+            bodyColor: '#e6e1e6',
+            borderColor: '#6E61EF',
+            borderWidth: 1,
+            padding: 12,
+            callbacks: {
+              label: function(context) {
+                const category = validCategories[context.dataIndex];
+                return [
+                  `Budget: ${Utils.formatCurrency(category.budgetAmount, currency)}`,
+                  `Spent: ${Utils.formatCurrency(category.spent, currency)}`,
+                  `Remaining: ${Utils.formatCurrency(category.budgetAmount - category.spent, currency)}`
+                ];
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Render custom legend
+    if (legendContainer) {
+      legendContainer.innerHTML = validCategories.map((category, index) => {
+        const percentage = Utils.calculatePercentage(category.spent, category.budgetAmount);
+        const remaining = category.budgetAmount - category.spent;
+        return `
+          <div class="legend-item" style="border-left-color: ${chartColors[index]}">
+            <div class="legend-left">
+              <div class="legend-color" style="background-color: ${chartColors[index]}"></div>
+              <span class="legend-name">${Utils.escapeHtml(category.categoryType)}</span>
+            </div>
+            <div class="legend-right">
+              <span class="legend-amount">${Utils.formatCurrency(category.spent, currency)} / ${Utils.formatCurrency(category.budgetAmount, currency)}</span>
+              <span class="legend-percentage">${percentage.toFixed(0)}% used</span>
+            </div>
+          </div>
+        `;
+      }).join('');
     }
   }
 
