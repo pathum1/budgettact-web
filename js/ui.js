@@ -24,10 +24,12 @@ const UI = (() => {
       }
 
       const currentMonth = Utils.getCurrentMonthYear();
-      const [transactions, categories, goals, metadata] = await Promise.all([
+      const [transactions, allTransactions, categories, goals, billers, metadata] = await Promise.all([
         Storage.getTransactionsByMonth(currentMonth),
+        Storage.getAllTransactions(),
         Storage.getAllCategories(),
         Storage.getAllSavingsGoals(true),
+        Storage.getAllBillers(),
         Storage.getMetadata()
       ]);
 
@@ -37,6 +39,7 @@ const UI = (() => {
         .reduce((sum, t) => sum + t.transactionAmount, 0);
 
       const currency = metadata?.currency || 'USD';
+      const monthlyIncome = metadata?.monthlyIncome || 0;
 
       // Calculate category data for doughnut chart
       const categoriesWithSpent = await Promise.all(
@@ -50,41 +53,60 @@ const UI = (() => {
         })
       );
 
+      // Calculate biller balances
+      const billersWithBalances = calculateBillerBalances(billers, allTransactions);
+
       let html = `
-        <div class="dashboard-grid">
-          <div class="dashboard-card">
-            <div class="card-title-section">
-              <h3>Total Spent</h3>
+        <div class="dashboard-container">
+          <div class="dashboard-main">
+            <div class="dashboard-grid">
+              <div class="dashboard-card">
+                <div class="card-title-section">
+                  <h3>Monthly Income</h3>
+                </div>
+                <div class="card-amount">${Utils.formatCurrency(monthlyIncome, currency)}</div>
+                <div class="card-subtitle">Budgeted income for the month</div>
+              </div>
+
+              <div class="dashboard-card">
+                <div class="card-title-section">
+                  <h3>Total Spent</h3>
+                </div>
+                <div class="card-amount">${Utils.formatCurrency(totalSpent, currency)}</div>
+                <div class="chart-container">
+                  <canvas id="spendingChart"></canvas>
+                </div>
+              </div>
+
+              <div class="dashboard-card">
+                <div class="card-title-section">
+                  <h3>Category Budget Overview</h3>
+                </div>
+                <div class="chart-container doughnut">
+                  <canvas id="categoryChart"></canvas>
+                </div>
+                <div class="category-legend" id="categoryLegend"></div>
+              </div>
             </div>
-            <div class="card-amount">${Utils.formatCurrency(totalSpent, currency)}</div>
-            <div class="chart-container">
-              <canvas id="spendingChart"></canvas>
+
+            <div class="full-width-card">
+              <div class="card-header">
+                <h3 class="card-title">Recent Transactions</h3>
+              </div>
+              ${renderTransactionsList(transactions.slice(0, 10), categories, currency)}
+            </div>
+
+            <div class="full-width-card">
+              <div class="card-header">
+                <h3 class="card-title">Active Goals</h3>
+              </div>
+              ${renderGoalsList(goals.slice(0, 3), currency)}
             </div>
           </div>
 
-          <div class="dashboard-card">
-            <div class="card-title-section">
-              <h3>Category Budget Overview</h3>
-            </div>
-            <div class="chart-container doughnut">
-              <canvas id="categoryChart"></canvas>
-            </div>
-            <div class="category-legend" id="categoryLegend"></div>
+          <div class="billers-sidebar">
+            ${renderBillerCards(billersWithBalances, currency)}
           </div>
-        </div>
-
-        <div class="full-width-card">
-          <div class="card-header">
-            <h3 class="card-title">Recent Transactions</h3>
-          </div>
-          ${renderTransactionsList(transactions.slice(0, 10), categories, currency)}
-        </div>
-
-        <div class="full-width-card">
-          <div class="card-header">
-            <h3 class="card-title">Active Goals</h3>
-          </div>
-          ${renderGoalsList(goals.slice(0, 3), currency)}
         </div>
       `;
 
@@ -324,6 +346,116 @@ const UI = (() => {
         `;
       }).join('');
     }
+  }
+
+  /**
+   * Calculate biller balances from transactions
+   */
+  function calculateBillerBalances(billers, transactions) {
+    return billers.map(biller => {
+      // Find all transactions for this biller
+      const billerTransactions = transactions.filter(t =>
+        t.billerName === biller.billerName
+      );
+
+      // Calculate balance (income adds, expenses subtract)
+      const balance = billerTransactions.reduce((sum, t) => {
+        if (t.transactionType === 'income') {
+          return sum + t.transactionAmount;
+        } else if (t.transactionType === 'expense') {
+          return sum - t.transactionAmount;
+        }
+        return sum;
+      }, 0);
+
+      return {
+        ...biller,
+        balance,
+        transactionCount: billerTransactions.length
+      };
+    }).sort((a, b) => {
+      // Sort: Total first, then Wallet, then others by balance
+      if (a.billerName === 'Total') return -1;
+      if (b.billerName === 'Total') return 1;
+      if (a.billerName === 'Wallet') return -1;
+      if (b.billerName === 'Wallet') return 1;
+      return b.balance - a.balance;
+    });
+  }
+
+  /**
+   * Render biller cards in credit card style
+   */
+  function renderBillerCards(billers, currency) {
+    if (!billers || billers.length === 0) {
+      return '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No accounts found</p>';
+    }
+
+    const getBillerCardClass = (billerName) => {
+      const name = billerName.toLowerCase();
+      if (name.includes('wallet')) return 'wallet';
+      if (name.includes('total')) return 'total';
+      return 'other';
+    };
+
+    const getBillerIcon = (billerName) => {
+      const name = billerName.toLowerCase();
+      if (name.includes('wallet')) {
+        return `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"></path>
+            <path d="M3 5v14a2 2 0 0 0 2 2h16v-5"></path>
+            <path d="M18 12a2 2 0 0 0 0 4h4v-4Z"></path>
+          </svg>
+        `;
+      }
+      if (name.includes('total')) {
+        return `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+            <line x1="1" y1="10" x2="23" y2="10"></line>
+          </svg>
+        `;
+      }
+      return `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
+          <line x1="1" y1="10" x2="23" y2="10"></line>
+        </svg>
+      `;
+    };
+
+    const header = '<div class="billers-header">Billers / Accounts</div>';
+
+    const cards = billers.map(biller => {
+      const cardClass = getBillerCardClass(biller.billerName);
+      const icon = getBillerIcon(biller.billerName);
+      const displayName = biller.billerActualName || biller.billerName;
+      const isNegative = biller.balance < 0;
+
+      return `
+        <div class="biller-card ${cardClass}">
+          <div class="biller-card-header">
+            <div class="biller-name">${Utils.escapeHtml(displayName)}</div>
+            <div class="biller-icon">${icon}</div>
+          </div>
+
+          <div class="biller-balance">
+            <div class="biller-balance-label">Current Balance</div>
+            <div class="biller-balance-amount">
+              ${isNegative ? '-' : ''}${Utils.formatCurrency(Math.abs(biller.balance), currency)}
+            </div>
+          </div>
+
+          <div class="biller-card-footer">
+            <div class="biller-type">${Utils.escapeHtml(biller.billerName)}</div>
+            <div class="biller-chip"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return header + cards;
   }
 
   /**

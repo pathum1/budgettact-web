@@ -18,6 +18,7 @@ This document defines the JSON data format for syncing between BudgetTact Androi
   "deviceId": "android-device-uuid",
   "deviceName": "User's Phone",
   "currency": "USD",
+  "monthlyIncome": 5000.00,
   "data": {
     "transactions": [...],
     "categories": [...],
@@ -251,6 +252,26 @@ This document defines the JSON data format for syncing between BudgetTact Androi
 
 ---
 
+## Root-Level Metadata Fields
+
+**Purpose:** Device and sync metadata sent with every sync payload
+
+**Field Specifications:**
+- `version`: String, sync contract version (currently "1.0")
+- `exportedAt`: String, ISO 8601 DateTime, when the export was created (UTC)
+- `deviceId`: String, unique device identifier (e.g., "android-device-uuid")
+- `deviceName`: String, human-readable device name (e.g., "User's Phone")
+- `currency`: String, 3-letter ISO currency code (e.g., "USD", "LKR", "EUR")
+- `monthlyIncome`: Number (double), user's budgeted monthly income for planning purposes
+
+**Notes:**
+- All root-level fields are required except where noted
+- `currency` defaults to "USD" if not set on the device
+- `monthlyIncome` defaults to 0 if not set on the device
+- `monthlyIncome` is used for budget planning and tracking on the web app
+
+---
+
 ## Date Format Standard
 
 **All dates and timestamps MUST use ISO 8601 format:**
@@ -293,6 +314,7 @@ This document defines the JSON data format for syncing between BudgetTact Androi
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0 | 2024-12-11 | Initial specification |
+| 1.1 | 2024-12-20 | Added `monthlyIncome` field for budget planning |
 
 ---
 

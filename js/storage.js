@@ -413,6 +413,7 @@ const Storage = (() => {
         deviceId: syncPayload.deviceId,
         deviceName: syncPayload.deviceName,
         currency: syncPayload.currency,
+        monthlyIncome: syncPayload.monthlyIncome || 0,
         version: syncPayload.version,
         importedAt: new Date().toISOString()
       });
