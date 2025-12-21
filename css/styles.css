@@ -1467,8 +1467,10 @@ main {
 /* Main content with sidebar */
 main {
   margin-left: var(--sidebar-width);
+  margin-right: 0;
   transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   padding: 32px;
+  max-width: none;
 }
 
 body:has(.sidebar.collapsed) main {
