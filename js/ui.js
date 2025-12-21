@@ -62,15 +62,7 @@ const UI = (() => {
             <div class="dashboard-grid">
               <div class="dashboard-card">
                 <div class="card-title-section">
-                  <h3>Monthly Income</h3>
-                </div>
-                <div class="card-amount">${Utils.formatCurrency(monthlyIncome, currency)}</div>
-                <div class="card-subtitle">Budgeted income for the month</div>
-              </div>
-
-              <div class="dashboard-card">
-                <div class="card-title-section">
-                  <h3>Total Spent</h3>
+                  <h3>Monthly Expenses</h3>
                 </div>
                 <div class="card-amount">${Utils.formatCurrency(totalSpent, currency)}</div>
                 <div class="chart-container">
@@ -157,7 +149,7 @@ const UI = (() => {
     const labels = Object.keys(dailySpending);
     const data = labels.map(label => {
       cumulative += dailySpending[label];
-      return cumulative;
+      return -cumulative; // Negative to show expenses going down
     });
 
     const ctx = canvas.getContext('2d');
@@ -172,7 +164,7 @@ const UI = (() => {
       data: {
         labels: labels,
         datasets: [{
-          label: 'Cumulative Spending',
+          label: 'Expenses',
           data: data,
           borderColor: '#6E61EF',
           backgroundColor: gradient,
@@ -203,7 +195,7 @@ const UI = (() => {
             displayColors: false,
             callbacks: {
               label: function(context) {
-                return 'Total: ' + Utils.formatCurrency(context.parsed.y, currency);
+                return 'Total: ' + Utils.formatCurrency(Math.abs(context.parsed.y), currency);
               }
             }
           }
@@ -211,6 +203,7 @@ const UI = (() => {
         scales: {
           y: {
             beginAtZero: true,
+            reverse: true, // Reverse so negative values appear below the axis
             grid: {
               color: 'rgba(148, 143, 153, 0.1)',
               drawBorder: false
@@ -218,7 +211,7 @@ const UI = (() => {
             ticks: {
               color: '#cac4cf',
               callback: function(value) {
-                return Utils.formatCurrency(value, currency);
+                return Utils.formatCurrency(Math.abs(value), currency);
               }
             }
           },
@@ -332,10 +325,12 @@ const UI = (() => {
       legendContainer.innerHTML = validCategories.map((category, index) => {
         const percentage = Utils.calculatePercentage(category.spent, category.budgetAmount);
         const remaining = category.budgetAmount - category.spent;
+        const icon = Utils.getCategoryIcon(category.iconName);
         return `
           <div class="legend-item" style="border-left-color: ${chartColors[index]}">
             <div class="legend-left">
               <div class="legend-color" style="background-color: ${chartColors[index]}"></div>
+              <span class="category-icon">${icon}</span>
               <span class="legend-name">${Utils.escapeHtml(category.categoryType)}</span>
             </div>
             <div class="legend-right">
@@ -352,7 +347,7 @@ const UI = (() => {
    * Calculate biller balances from transactions
    */
   function calculateBillerBalances(billers, transactions) {
-    return billers.map(biller => {
+    const billersWithBalances = billers.map(biller => {
       // Find all transactions for this biller
       const billerTransactions = transactions.filter(t =>
         t.billerName === biller.billerName
@@ -373,10 +368,26 @@ const UI = (() => {
         balance,
         transactionCount: billerTransactions.length
       };
-    }).sort((a, b) => {
+    });
+
+    // Find the "Total" or "Total Balance" biller and update its balance to sum of all others
+    const totalBiller = billersWithBalances.find(b =>
+      b.billerName === 'Total' || b.billerName === 'Total Balance'
+    );
+
+    if (totalBiller) {
+      // Calculate sum of all non-Total billers
+      const totalBalance = billersWithBalances
+        .filter(b => b.billerName !== 'Total' && b.billerName !== 'Total Balance')
+        .reduce((sum, b) => sum + b.balance, 0);
+
+      totalBiller.balance = totalBalance;
+    }
+
+    return billersWithBalances.sort((a, b) => {
       // Sort: Total first, then Wallet, then others by balance
-      if (a.billerName === 'Total') return -1;
-      if (b.billerName === 'Total') return 1;
+      if (a.billerName === 'Total' || a.billerName === 'Total Balance') return -1;
+      if (b.billerName === 'Total' || b.billerName === 'Total Balance') return 1;
       if (a.billerName === 'Wallet') return -1;
       if (b.billerName === 'Wallet') return 1;
       return b.balance - a.balance;
@@ -431,7 +442,6 @@ const UI = (() => {
       const cardClass = getBillerCardClass(biller.billerName);
       const icon = getBillerIcon(biller.billerName);
       const displayName = biller.billerActualName || biller.billerName;
-      const isNegative = biller.balance < 0;
 
       return `
         <div class="biller-card ${cardClass}">
@@ -443,7 +453,7 @@ const UI = (() => {
           <div class="biller-balance">
             <div class="biller-balance-label">Current Balance</div>
             <div class="biller-balance-amount">
-              ${isNegative ? '-' : ''}${Utils.formatCurrency(Math.abs(biller.balance), currency)}
+              ${Utils.formatCurrency(biller.balance, currency)}
             </div>
           </div>
 
@@ -535,11 +545,15 @@ const UI = (() => {
         const remaining = category.budgetAmount - category.spent;
         const percentage = Utils.calculatePercentage(category.spent, category.budgetAmount);
         const progressClass = percentage >= 100 ? 'danger' : percentage >= 80 ? 'warning' : '';
+        const icon = Utils.getCategoryIcon(category.iconName);
 
         return `
           <div class="category-card">
             <div class="category-header">
-              <div class="category-name">${Utils.escapeHtml(category.categoryType)}</div>
+              <div class="category-name">
+                <span class="category-icon">${icon}</span>
+                ${Utils.escapeHtml(category.categoryType)}
+              </div>
             </div>
             <div class="category-amounts">
               <span class="category-budget">Budget: ${Utils.formatCurrency(category.budgetAmount, currency)}</span>
@@ -646,23 +660,29 @@ const UI = (() => {
       return '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No transactions</p>';
     }
 
-    // Create category lookup map
+    // Create category lookup map with name and icon
     const categoryMap = {};
     categories.forEach(c => {
-      categoryMap[c.id] = c.categoryType;
+      categoryMap[c.id] = {
+        name: c.categoryType,
+        icon: Utils.getCategoryIcon(c.iconName)
+      };
     });
 
     return transactions.map(t => {
-      const categoryName = categoryMap[t.transactionCategory] || 'Unknown';
+      const category = categoryMap[t.transactionCategory] || { name: 'Unknown', icon: '💰' };
       const amountClass = t.transactionType === 'expense' ? 'expense' : 'income';
       const amountPrefix = t.transactionType === 'expense' ? '-' : '+';
 
       return `
         <div class="transaction-item">
           <div class="transaction-info">
-            <div class="transaction-merchant">${Utils.escapeHtml(t.merchantName)}</div>
+            <div class="transaction-merchant">
+              <span class="category-icon">${category.icon}</span>
+              ${Utils.escapeHtml(t.merchantName)}
+            </div>
             <div class="transaction-meta">
-              ${Utils.formatRelativeDate(t.transactionDate)} &bull; ${Utils.escapeHtml(categoryName)}
+              ${Utils.formatRelativeDate(t.transactionDate)} &bull; ${Utils.escapeHtml(category.name)}
             </div>
           </div>
           <div class="transaction-amount ${amountClass}">

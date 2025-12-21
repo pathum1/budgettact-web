@@ -238,6 +238,47 @@ const Utils = (() => {
     });
   }
 
+  /**
+   * Get category emoji icon from iconName
+   * @param {string|null} iconName - Icon name from category data
+   * @returns {string} Emoji icon
+   */
+  function getCategoryIcon(iconName) {
+    const iconMap = {
+      'coffee': '☕',
+      'gift': '🎁',
+      'groceries': '🛒',
+      'food': '🍽️',
+      'junk_food': '🍕',
+      'online_purchase': '🛍️',
+      'utilities': '💡',
+      'telecommunications': '☎️',
+      'credit_card': '💳',
+      'internet': '🌐',
+      'mobile': '📱',
+      'subscription': '🎬',
+      'education': '🎓',
+      'repairs': '🔧',
+      'housing': '🏠',
+      'religious': '🙏',
+      'alcohol': '🍺',
+      'children': '👶',
+      'social': '👥',
+      'cigarettes': '🚬',
+      'pets': '🐾',
+      'snacks': '🍿',
+      'vegetables': '🥬',
+      'fruits': '🍎',
+      'healthcare': '🏥',
+      'beauty': '💄',
+      'transport': '🚌',
+      'domestic_help': '🧹',
+      'electronics': '📺',
+      'miscellaneous': '🔀'
+    };
+    return iconMap[iconName] || '💰';
+  }
+
   // Public API
   return {
     formatCurrency,
@@ -252,6 +293,7 @@ const Utils = (() => {
     calculatePercentage,
     escapeHtml,
     groupBy,
-    sortBy
+    sortBy,
+    getCategoryIcon
   };
 })();

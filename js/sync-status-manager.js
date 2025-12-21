@@ -22,12 +22,15 @@ class SyncStatusManager {
         <span class="status-dot"></span>
         <span class="status-text">Disconnected</span>
       </div>
-      <div class="status-details">
-        <small class="last-sync">Never synced</small>
-      </div>
     `;
 
-    document.body.appendChild(statusDiv);
+    // Insert before the header buttons in the header
+    const headerButtons = document.querySelector('.header-buttons');
+    if (headerButtons) {
+      headerButtons.parentElement.insertBefore(statusDiv, headerButtons);
+    } else {
+      document.body.appendChild(statusDiv);
+    }
     this.statusElement = statusDiv;
   }
 
@@ -66,8 +69,8 @@ class SyncStatusManager {
   }
 
   setDetailsMessage(message) {
-    const details = this.statusElement.querySelector('.last-sync');
-    details.textContent = message;
+    // Details section removed from header version
+    // Keep this method for compatibility but do nothing
   }
 
   showOfflineWarning() {

@@ -743,7 +743,9 @@ const Storage = (() => {
         t => t.transactionCategory === categoryId && t.transactionType === 'expense'
       );
 
-      return categoryTransactions.reduce((sum, t) => sum + t.transactionAmount, 0);
+      // Return absolute value since transaction amounts are stored as negative for expenses
+      const total = categoryTransactions.reduce((sum, t) => sum + t.transactionAmount, 0);
+      return Math.abs(total);
     } catch (error) {
       console.error('Failed to calculate category spent:', error);
       return 0;

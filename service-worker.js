@@ -1,4 +1,4 @@
-const CACHE_NAME = 'budgettact-v1.2.0';
+const CACHE_NAME = 'budgettact-v1.5.0';
 const urlsToCache = [
   './',
   './index.html',

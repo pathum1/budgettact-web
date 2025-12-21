@@ -1844,3 +1844,11 @@ body:has(.sidebar.collapsed) main {
     font-size: 22px;
   }
 }
+
+/* Category Icons */
+.category-icon {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 18px;
+  vertical-align: middle;
+}
