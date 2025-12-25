@@ -1477,6 +1477,88 @@ body:has(.sidebar.collapsed) main {
   margin-left: var(--sidebar-collapsed-width);
 }
 
+/* === Month Navigation === */
+.month-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 20px 24px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-card);
+  margin-bottom: 24px;
+  box-shadow: var(--shadow);
+}
+
+.month-nav-btn {
+  background: var(--surface-1);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-color);
+}
+
+.month-nav-btn:hover {
+  background: rgba(111, 97, 239, 0.12);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  transform: scale(1.05);
+}
+
+.month-nav-btn:active {
+  transform: scale(0.95);
+}
+
+.month-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 200px;
+}
+
+.month-label {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-color);
+  letter-spacing: -0.3px;
+}
+
+.month-nav-dots {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.month-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--outline-variant);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.month-dot:hover {
+  background: var(--primary-color);
+  transform: scale(1.3);
+}
+
+.month-dot.active {
+  width: 12px;
+  height: 12px;
+  background: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(111, 97, 239, 0.2);
+}
+
 /* === New Dashboard Layout === */
 .dashboard-container {
   display: grid;
@@ -1527,6 +1609,40 @@ body:has(.sidebar.collapsed) main {
   font-weight: 600;
   color: var(--text-color);
   margin: 0;
+}
+
+/* Chart View Toggle */
+.chart-view-toggle {
+  display: flex;
+  gap: 6px;
+  background: var(--surface-1);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--outline-variant);
+}
+
+.chart-view-toggle .toggle-btn {
+  padding: 6px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.chart-view-toggle .toggle-btn:hover {
+  color: var(--text-color);
+  background: rgba(111, 97, 239, 0.08);
+}
+
+.chart-view-toggle .toggle-btn.active {
+  background: var(--primary-color);
+  color: #0b0a0f;
+  box-shadow: 0 2px 4px rgba(110, 97, 239, 0.3);
 }
 
 .card-amount {
@@ -1589,7 +1705,7 @@ body:has(.sidebar.collapsed) main {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 12px;
+  padding: 6px 12px;
   margin-bottom: 8px;
   background: var(--surface-1);
   border-radius: 8px;
@@ -1842,6 +1958,40 @@ body:has(.sidebar.collapsed) main {
 
   .biller-balance-amount {
     font-size: 22px;
+  }
+
+  .month-navigation {
+    padding: 16px 20px;
+    gap: 16px;
+  }
+
+  .month-display {
+    min-width: 150px;
+  }
+
+  .month-label {
+    font-size: 16px;
+  }
+
+  .month-nav-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .card-title-section {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .chart-view-toggle {
+    width: 100%;
+  }
+
+  .chart-view-toggle .toggle-btn {
+    flex: 1;
+    font-size: 11px;
+    padding: 8px 10px;
   }
 }
 

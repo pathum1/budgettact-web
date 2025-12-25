@@ -5,6 +5,39 @@ const UI = (() => {
     search: ''
   };
 
+  // State for selected month (null = current month)
+  let selectedMonthOffset = 0; // 0 = current, -1 = previous, 1 = next, etc.
+
+  // State for chart view type
+  let chartViewType = 'cumulative'; // 'cumulative' or 'daily'
+
+  // Store current chart data for re-rendering without full dashboard refresh
+  let currentChartData = {
+    transactions: [],
+    currency: 'USD',
+    monthYear: ''
+  };
+
+  /**
+   * Get month-year string based on offset from current month
+   */
+  function getMonthByOffset(offset) {
+    const date = new Date();
+    date.setMonth(date.getMonth() + offset);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+  }
+
+  /**
+   * Get formatted month name for display
+   */
+  function getMonthNameByOffset(offset) {
+    const date = new Date();
+    date.setMonth(date.getMonth() + offset);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
   /**
    * Render Dashboard View
    */
@@ -23,7 +56,7 @@ const UI = (() => {
         return;
       }
 
-      const currentMonth = Utils.getCurrentMonthYear();
+      const currentMonth = getMonthByOffset(selectedMonthOffset);
       const [transactions, allTransactions, categories, goals, billers, metadata] = await Promise.all([
         Storage.getTransactionsByMonth(currentMonth),
         Storage.getAllTransactions(),
@@ -36,10 +69,14 @@ const UI = (() => {
       // Calculate stats
       const totalSpent = transactions
         .filter(t => t.transactionType === 'expense')
-        .reduce((sum, t) => sum + t.transactionAmount, 0);
+        .reduce((sum, t) => sum + Math.abs(t.transactionAmount), 0);
 
       const currency = metadata?.currency || 'USD';
       const monthlyIncome = metadata?.monthlyIncome || 0;
+
+      // Debug: Log currency information
+      console.log('Currency from metadata:', metadata?.currency);
+      console.log('Using currency:', currency);
 
       // Calculate category data for doughnut chart
       const categoriesWithSpent = await Promise.all(
@@ -57,12 +94,36 @@ const UI = (() => {
       const billersWithBalances = calculateBillerBalances(billers, allTransactions);
 
       let html = `
+        <div class="month-navigation">
+          <button class="month-nav-btn" id="prev-month" title="Previous month">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 18 9 12 15 6"></polyline>
+            </svg>
+          </button>
+          <div class="month-display">
+            <div class="month-label">${getMonthNameByOffset(selectedMonthOffset)}</div>
+            <div class="month-nav-dots">
+              <span class="month-dot" data-offset="-1" title="${getMonthNameByOffset(selectedMonthOffset - 1)}"></span>
+              <span class="month-dot active" data-offset="0" title="${getMonthNameByOffset(selectedMonthOffset)}"></span>
+              <span class="month-dot" data-offset="1" title="${getMonthNameByOffset(selectedMonthOffset + 1)}"></span>
+            </div>
+          </div>
+          <button class="month-nav-btn" id="next-month" title="Next month">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </button>
+        </div>
         <div class="dashboard-container">
           <div class="dashboard-main">
             <div class="dashboard-grid">
               <div class="dashboard-card">
                 <div class="card-title-section">
                   <h3>Monthly Expenses</h3>
+                  <div class="chart-view-toggle">
+                    <button class="toggle-btn ${chartViewType === 'cumulative' ? 'active' : ''}" data-view="cumulative">Cumulative</button>
+                    <button class="toggle-btn ${chartViewType === 'daily' ? 'active' : ''}" data-view="daily">Daily</button>
+                  </div>
                 </div>
                 <div class="card-amount">${Utils.formatCurrency(totalSpent, currency)}</div>
                 <div class="chart-container">
@@ -104,10 +165,57 @@ const UI = (() => {
 
       container.innerHTML = html;
 
+      // Store current chart data for toggle functionality
+      currentChartData = {
+        transactions: transactions,
+        currency: currency,
+        monthYear: currentMonth
+      };
+
       // Render charts after DOM is updated
       setTimeout(() => {
-        renderSpendingLineChart(transactions, currency);
+        renderSpendingLineChart(transactions, currency, currentMonth);
         renderCategoryDoughnutChart(categoriesWithSpent, currency);
+
+        // Add month navigation event listeners
+        const prevBtn = document.getElementById('prev-month');
+        const nextBtn = document.getElementById('next-month');
+
+        if (prevBtn) {
+          prevBtn.addEventListener('click', () => {
+            selectedMonthOffset--;
+            renderDashboard();
+          });
+        }
+
+        if (nextBtn) {
+          nextBtn.addEventListener('click', () => {
+            selectedMonthOffset++;
+            renderDashboard();
+          });
+        }
+
+        // Add chart view toggle event listeners
+        const toggleBtns = document.querySelectorAll('.chart-view-toggle .toggle-btn');
+        toggleBtns.forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            const newView = e.target.dataset.view;
+            if (newView !== chartViewType) {
+              chartViewType = newView;
+
+              // Update toggle button states
+              toggleBtns.forEach(b => b.classList.remove('active'));
+              e.target.classList.add('active');
+
+              // Re-render only the spending chart
+              renderSpendingLineChart(
+                currentChartData.transactions,
+                currentChartData.currency,
+                currentChartData.monthYear
+              );
+            }
+          });
+        });
       }, 100);
 
     } catch (error) {
@@ -119,7 +227,7 @@ const UI = (() => {
   /**
    * Render spending line chart with gradient
    */
-  function renderSpendingLineChart(transactions, currency) {
+  function renderSpendingLineChart(transactions, currency, monthYear) {
     const canvas = document.getElementById('spendingChart');
     if (!canvas) return;
 
@@ -134,33 +242,66 @@ const UI = (() => {
     // Sort by date
     expenses.sort((a, b) => new Date(a.transactionDate) - new Date(b.transactionDate));
 
-    // Group by day and calculate cumulative spending
-    const dailySpending = {};
-    let cumulative = 0;
+    let labels, data;
 
-    expenses.forEach(t => {
-      const date = new Date(t.transactionDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      if (!dailySpending[date]) {
-        dailySpending[date] = 0;
+    if (chartViewType === 'daily') {
+      // Daily view: Show spending for each day of the month
+      const [year, month] = monthYear.split('-');
+      const daysInMonth = new Date(year, month, 0).getDate();
+
+      // Create labels for all days in the month
+      labels = [];
+      const dailyAmounts = new Array(daysInMonth).fill(0);
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        labels.push(day.toString());
       }
-      dailySpending[date] += t.transactionAmount;
-    });
 
-    const labels = Object.keys(dailySpending);
-    const data = labels.map(label => {
-      cumulative += dailySpending[label];
-      return -cumulative; // Negative to show expenses going down
-    });
+      // Fill in actual spending data
+      expenses.forEach(t => {
+        const date = new Date(t.transactionDate);
+        const day = date.getDate();
+        dailyAmounts[day - 1] += Math.abs(t.transactionAmount);
+      });
+
+      data = dailyAmounts;
+    } else {
+      // Cumulative view: Show cumulative spending over time
+      const dailySpending = {};
+      let cumulative = 0;
+
+      expenses.forEach(t => {
+        const date = new Date(t.transactionDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        if (!dailySpending[date]) {
+          dailySpending[date] = 0;
+        }
+        // Use absolute value since expenses are stored as negative
+        dailySpending[date] += Math.abs(t.transactionAmount);
+      });
+
+      labels = Object.keys(dailySpending);
+      data = labels.map(label => {
+        cumulative += dailySpending[label];
+        return cumulative; // Positive values for proper chart display
+      });
+    }
 
     const ctx = canvas.getContext('2d');
 
     // Create gradient
     const gradient = ctx.createLinearGradient(0, 0, 0, 200);
-    gradient.addColorStop(0, 'rgba(110, 97, 239, 0.4)');
-    gradient.addColorStop(1, 'rgba(110, 97, 239, 0.01)');
+    if (chartViewType === 'daily') {
+      // Bar chart gradient (vertical)
+      gradient.addColorStop(0, 'rgba(110, 97, 239, 0.9)');
+      gradient.addColorStop(1, 'rgba(110, 97, 239, 0.3)');
+    } else {
+      // Line chart gradient
+      gradient.addColorStop(0, 'rgba(110, 97, 239, 0.4)');
+      gradient.addColorStop(1, 'rgba(110, 97, 239, 0.01)');
+    }
 
-    canvas.chart = new Chart(ctx, {
-      type: 'line',
+    const chartConfig = {
+      type: chartViewType === 'daily' ? 'bar' : 'line',
       data: {
         labels: labels,
         datasets: [{
@@ -168,14 +309,16 @@ const UI = (() => {
           data: data,
           borderColor: '#6E61EF',
           backgroundColor: gradient,
-          borderWidth: 3,
+          borderWidth: chartViewType === 'daily' ? 0 : 3,
           fill: true,
           tension: 0.4,
-          pointRadius: 4,
+          pointRadius: chartViewType === 'daily' ? 0 : 4,
           pointBackgroundColor: '#6E61EF',
           pointBorderColor: '#fff',
           pointBorderWidth: 2,
-          pointHoverRadius: 6
+          pointHoverRadius: 6,
+          borderRadius: chartViewType === 'daily' ? 6 : 0,
+          borderSkipped: false
         }]
       },
       options: {
@@ -195,7 +338,8 @@ const UI = (() => {
             displayColors: false,
             callbacks: {
               label: function(context) {
-                return 'Total: ' + Utils.formatCurrency(Math.abs(context.parsed.y), currency);
+                const label = chartViewType === 'daily' ? 'Spent: ' : 'Total: ';
+                return label + Utils.formatCurrency(context.parsed.y, currency);
               }
             }
           }
@@ -203,7 +347,6 @@ const UI = (() => {
         scales: {
           y: {
             beginAtZero: true,
-            reverse: true, // Reverse so negative values appear below the axis
             grid: {
               color: 'rgba(148, 143, 153, 0.1)',
               drawBorder: false
@@ -211,24 +354,29 @@ const UI = (() => {
             ticks: {
               color: '#cac4cf',
               callback: function(value) {
-                return Utils.formatCurrency(Math.abs(value), currency);
+                return Utils.formatCurrency(value, currency);
               }
             }
           },
           x: {
             grid: {
-              display: false,
+              display: chartViewType === 'daily',
+              color: 'rgba(148, 143, 153, 0.05)',
               drawBorder: false
             },
             ticks: {
               color: '#cac4cf',
-              maxRotation: 45,
-              minRotation: 45
+              maxRotation: chartViewType === 'daily' ? 0 : 45,
+              minRotation: chartViewType === 'daily' ? 0 : 45,
+              autoSkip: true,
+              maxTicksLimit: chartViewType === 'daily' ? 15 : undefined
             }
           }
         }
       }
-    });
+    };
+
+    canvas.chart = new Chart(ctx, chartConfig);
   }
 
   /**

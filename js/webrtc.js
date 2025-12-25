@@ -639,6 +639,31 @@ const WebRTCSync = (() => {
 
             console.log(`🔐 Hash status: ${recordsWithHashes}/${totalRecords} records have hashes`);
 
+            // Extract and store currency from incoming transactions
+            if (actualData.transactions && actualData.transactions.length > 0) {
+              const currency = actualData.transactions[0].currency;
+              if (currency) {
+                console.log('💱 Currency extracted from transaction:', currency);
+                try {
+                  // Get existing metadata and update it with currency
+                  let metadata = await Storage.db.metadata.get('lastSync');
+                  if (!metadata) {
+                    // Create new metadata if it doesn't exist
+                    metadata = { key: 'lastSync' };
+                  }
+                  metadata.currency = currency;
+                  await Storage.db.metadata.put(metadata);
+                  console.log('✅ Currency stored in lastSync metadata:', currency);
+                } catch (error) {
+                  console.error('❌ Failed to store currency in metadata:', error);
+                }
+              } else {
+                console.warn('⚠️ No currency found in first transaction');
+              }
+            } else {
+              console.log('ℹ️ No transactions in sync data, currency not extracted');
+            }
+
             // Log IndexedDB state BEFORE applying changes
             const countsBefore = {
               transactions: await Storage.db.transactions.count(),

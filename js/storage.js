@@ -405,6 +405,23 @@ const Storage = (() => {
         throw new Error('Sync payload missing data object');
       }
 
+      // Determine currency - try from payload, then from first transaction, default to USD
+      console.log('🔍 Checking currency in sync payload...');
+      console.log('   - syncPayload.currency:', syncPayload.currency);
+      console.log('   - First transaction currency:', data.transactions?.[0]?.currency);
+      console.log('   - Sample transaction:', data.transactions?.[0]);
+
+      let currency = syncPayload.currency;
+      if (!currency && data.transactions && data.transactions.length > 0) {
+        currency = data.transactions[0].currency;
+        console.log('📝 Currency extracted from transaction:', currency);
+      }
+      if (!currency) {
+        currency = 'USD';
+        console.warn('⚠️ No currency found in payload or transactions, defaulting to USD');
+      }
+      console.log('✅ Final currency to store:', currency);
+
       // Store metadata
       console.log('💾 Storing metadata...');
       await db.metadata.put({
@@ -412,12 +429,12 @@ const Storage = (() => {
         exportedAt: syncPayload.exportedAt,
         deviceId: syncPayload.deviceId,
         deviceName: syncPayload.deviceName,
-        currency: syncPayload.currency,
+        currency: currency,
         monthlyIncome: syncPayload.monthlyIncome || 0,
         version: syncPayload.version,
         importedAt: new Date().toISOString()
       });
-      console.log('✅ Metadata stored');
+      console.log('✅ Metadata stored with currency:', currency);
 
       // Helper to add sync metadata to records
       const addSyncMetadata = (record, deviceId) => {

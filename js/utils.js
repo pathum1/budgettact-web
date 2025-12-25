@@ -7,12 +7,53 @@ const Utils = (() => {
    */
   function formatCurrency(amount, currency = 'USD') {
     try {
+      // Normalize currency code (handle both 3-letter codes and symbols)
+      const currencyCode = currency?.toUpperCase() || 'USD';
+
       return new Intl.NumberFormat('en-US', {
         style: 'currency',
-        currency: currency
+        currency: currencyCode
       }).format(amount);
     } catch (error) {
-      return `$${amount.toFixed(2)}`;
+      console.warn('Currency formatting error:', error, 'Currency:', currency);
+      // Fallback: try to get symbol from common currencies
+      const symbolMap = {
+        'USD': '$',
+        'EUR': '€',
+        'GBP': '£',
+        'INR': '₹',
+        'JPY': '¥',
+        'CNY': '¥',
+        'AUD': 'A$',
+        'CAD': 'C$',
+        'CHF': 'Fr',
+        'SEK': 'kr',
+        'NZD': 'NZ$',
+        'ZAR': 'R',
+        'BRL': 'R$',
+        'MXN': 'Mex$',
+        'SGD': 'S$',
+        'HKD': 'HK$',
+        'NOK': 'kr',
+        'KRW': '₩',
+        'TRY': '₺',
+        'RUB': '₽',
+        'THB': '฿',
+        'PLN': 'zł',
+        'DKK': 'kr',
+        'MYR': 'RM',
+        'IDR': 'Rp',
+        'PHP': '₱',
+        'CZK': 'Kč',
+        'ILS': '₪',
+        'CLP': '$',
+        'TWD': 'NT$',
+        'AED': 'د.إ',
+        'SAR': '﷼',
+        'EGP': 'E£'
+      };
+      const symbol = symbolMap[currency?.toUpperCase()] || currency || '$';
+      return `${symbol}${amount.toFixed(2)}`;
     }
   }
 
