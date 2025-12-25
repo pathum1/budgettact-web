@@ -5,37 +5,14 @@ class SyncStatusManager {
   }
 
   init() {
-    this.createStatusIndicator();
+    // Use existing element from HTML
+    this.statusElement = document.getElementById('sync-status');
     this.updateLastSyncTime();
-  }
-
-  createStatusIndicator() {
-    // Remove legacy footer status if present
-    const legacy = document.getElementById('sync-status');
-    if (legacy) legacy.remove();
-
-    const statusDiv = document.createElement('div');
-    statusDiv.id = 'sync-status';
-    statusDiv.className = 'sync-status';
-    statusDiv.innerHTML = `
-      <div class="status-indicator">
-        <span class="status-dot"></span>
-        <span class="status-text">Disconnected</span>
-      </div>
-    `;
-
-    // Insert before the header buttons in the header
-    const headerButtons = document.querySelector('.header-buttons');
-    if (headerButtons) {
-      headerButtons.parentElement.insertBefore(statusDiv, headerButtons);
-    } else {
-      document.body.appendChild(statusDiv);
-    }
-    this.statusElement = statusDiv;
   }
 
   setStatus(status, message = '') {
     this.currentStatus = status;
+    if (!this.statusElement) return;
 
     const dot = this.statusElement.querySelector('.status-dot');
     const text = this.statusElement.querySelector('.status-text');
@@ -43,7 +20,7 @@ class SyncStatusManager {
     switch (status) {
       case 'connected':
         dot.className = 'status-dot connected';
-        text.textContent = 'Connected';
+        this.updateLastSyncTime();
         break;
       case 'syncing':
         dot.className = 'status-dot syncing';
@@ -51,7 +28,7 @@ class SyncStatusManager {
         break;
       case 'offline':
         dot.className = 'status-dot offline';
-        text.textContent = 'Phone offline';
+        this.updateLastSyncTime();
         this.showOfflineWarning();
         break;
       case 'error':
@@ -60,7 +37,7 @@ class SyncStatusManager {
         break;
       default:
         dot.className = 'status-dot';
-        text.textContent = 'Disconnected';
+        this.updateLastSyncTime();
     }
 
     if (message) {
@@ -69,16 +46,25 @@ class SyncStatusManager {
   }
 
   setDetailsMessage(message) {
-    // Details section removed from header version
-    // Keep this method for compatibility but do nothing
+    // Update the status text with the message if provided
+    if (this.statusElement) {
+      const text = this.statusElement.querySelector('.status-text');
+      if (text && message) {
+        text.textContent = message;
+      }
+    }
   }
 
   showOfflineWarning() {
+    // Remove existing warning if any
+    const existingWarning = document.querySelector('.offline-warning');
+    if (existingWarning) existingWarning.remove();
+
     const warning = document.createElement('div');
     warning.className = 'offline-warning';
     warning.innerHTML = `
       <div class="warning-content">
-        <span class="warning-icon">⚠️</span>
+        <span class="warning-icon">!</span>
         <div class="warning-text">
           <strong>Phone is offline</strong>
           <p>Your changes will sync when your phone reconnects</p>
@@ -95,14 +81,49 @@ class SyncStatusManager {
   }
 
   updateLastSyncTime() {
+    if (!this.statusElement) return;
+
+    const text = this.statusElement.querySelector('.status-text');
+    if (!text) return;
+
     const lastSync = PairingManager.getLastSyncTime();
     if (lastSync) {
       const date = new Date(lastSync);
-      const timeAgo = this.getTimeAgo(date);
-      this.setDetailsMessage(`Last synced: ${timeAgo}`);
+      const formattedTime = this.formatLastSync(date);
+      text.textContent = `Last sync: ${formattedTime}`;
     } else {
-      this.setDetailsMessage('Never synced');
+      text.textContent = 'Last sync: Never';
     }
+  }
+
+  formatLastSync(date) {
+    const now = new Date();
+    const seconds = Math.floor((now - date) / 1000);
+
+    // If less than a minute ago
+    if (seconds < 60) return 'Just now';
+
+    // If less than an hour ago
+    if (seconds < 3600) {
+      const mins = Math.floor(seconds / 60);
+      return `${mins}m ago`;
+    }
+
+    // If same day, show time
+    if (date.toDateString() === now.toDateString()) {
+      return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    }
+
+    // If yesterday
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (date.toDateString() === yesterday.toDateString()) {
+      return 'Yesterday ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    }
+
+    // Otherwise show date and time
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+           ' ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
 
   getTimeAgo(date) {

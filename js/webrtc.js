@@ -15,9 +15,13 @@ const WebRTCSync = (() => {
   let connectionTimeout = null;
   const listeners = {};
 
-  // PeerJS signaling server configuration
-  const SIGNALING_SERVER = 'wss://0.peerjs.com/peerjs';
-  const PEERJS_KEY = 'peerjs';
+  // PeerJS signaling server configuration with fallbacks
+  // Primary: 0.peerjs.com (more reliable), Fallback: peerjs.com
+  const SIGNALING_SERVERS = [
+    { url: 'wss://0.peerjs.com/peerjs', key: 'peerjs', name: '0.peerjs.com' },
+    { url: 'wss://peerjs.com/peerjs', key: 'peerjs', name: 'peerjs.com' }
+  ];
+  let currentServerIndex = 0;
 
   // WebRTC configuration - loaded from TurnConfig
   const rtcConfig = TurnConfig.getIceServers();
@@ -49,6 +53,62 @@ const WebRTCSync = (() => {
     return new Promise((resolve, reject) => {
       try {
         console.log('🔵 WebRTCSync.init() called with peerId:', peerId);
+
+        // Diagnostic: Check what WebRTC APIs are available
+        console.log('🔍 WebRTC API Check:', {
+          RTCPeerConnection: typeof RTCPeerConnection,
+          webkitRTCPeerConnection: typeof webkitRTCPeerConnection,
+          mozRTCPeerConnection: typeof mozRTCPeerConnection,
+          RTCSessionDescription: typeof RTCSessionDescription,
+          RTCIceCandidate: typeof RTCIceCandidate,
+          getUserMedia: typeof navigator.mediaDevices?.getUserMedia,
+          adapter: typeof adapter
+        });
+
+        // Test WebSocket connectivity
+        console.log('🔍 Testing WebSocket support:', {
+          WebSocket: typeof WebSocket,
+          wsSupported: 'WebSocket' in window
+        });
+
+        // Check if WebRTC is supported
+        if (typeof RTCPeerConnection === 'undefined') {
+          const error = new Error('WebRTC is not supported in this browser. Please use a modern browser (Chrome, Firefox, Edge, Safari) with WebRTC enabled.');
+          console.error('❌ RTCPeerConnection is not defined. WebRTC APIs are not available.');
+          console.error('💡 Possible causes:');
+          console.error('   1. WebRTC is DISABLED in Firefox settings');
+          console.error('      Fix: Go to about:config and set media.peerconnection.enabled = true');
+          console.error('   2. Privacy.resistFingerprinting is enabled (disables WebRTC)');
+          console.error('      Fix: Go to about:config and set privacy.resistFingerprinting = false');
+          console.error('   3. Browser extension is blocking WebRTC (Privacy Badger, uBlock, NoScript)');
+          console.error('      Fix: Disable WebRTC blocking in extension settings');
+          console.error('   4. adapter.js failed to load from CDN');
+          console.error('      Check Network tab for script loading errors');
+          console.error('');
+          console.error('🔧 Quick Firefox fix: Type about:config in address bar, search for "media.peerconnection.enabled", set to true');
+          updateState('error');
+          reject(error);
+          return;
+        }
+
+        // Check if already connected via preConnect
+        if (myPeerId === peerId && signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
+          console.log('✅ Already connected to signaling server via preConnect');
+          updateState('waiting');
+
+          // Set expiration timeout
+          connectionTimeout = setTimeout(() => {
+            if (!dataChannel || dataChannel.readyState !== 'open') {
+              console.log('⏱️ No connection received, QR code expired');
+              updateState('expired');
+              disconnect();
+            }
+          }, 300000); // 5 minutes
+
+          resolve(peerId);
+          return;
+        }
+
         myPeerId = peerId;
 
         // Connect to signaling server
@@ -75,45 +135,134 @@ const WebRTCSync = (() => {
   };
 
   /**
-   * Connect to PeerJS signaling server via WebSocket
+   * Connect to PeerJS signaling server via WebSocket with fallback support
    */
   const connectToSignalingServer = (peerId) => {
     return new Promise((resolve, reject) => {
-      try {
-        // Build WebSocket URL for PeerJS server
-        const wsUrl = `${SIGNALING_SERVER}?key=${PEERJS_KEY}&id=${peerId}&token=${generateToken()}`;
-        console.log('🔌 Connecting to signaling server:', wsUrl);
+      let attemptCount = 0;
+      let lastError = null;
 
-        signalingSocket = new WebSocket(wsUrl);
-
-        signalingSocket.onopen = () => {
-          console.log('✅ [Signaling] WebSocket connected');
-          resolve();
-        };
-
-        signalingSocket.onmessage = (event) => {
-          try {
-            const message = JSON.parse(event.data);
-            console.log('📨 [Signaling] Received:', message);
-            handleSignalingMessage(message);
-          } catch (err) {
-            console.error('❌ [Signaling] Failed to parse message:', err);
-          }
-        };
-
-        signalingSocket.onerror = (error) => {
-          console.error('❌ [Signaling] WebSocket error:', error);
+      const tryNextServer = () => {
+        if (attemptCount >= SIGNALING_SERVERS.length) {
+          // All servers failed
+          console.error('❌ [Signaling] All signaling servers failed');
+          console.error('💡 WebSocket connection failed. Possible causes:');
+          console.error('   1. Firefox extension blocking WebSockets (uBlock Origin, NoScript, Privacy Badger)');
+          console.error('      Fix: Disable WebSocket blocking in extension settings or whitelist this site');
+          console.error('   2. Network/Firewall blocking WebSocket connections (port 443)');
+          console.error('      Fix: Check firewall settings or try a different network');
+          console.error('   3. Firefox network.websocket.enabled is disabled');
+          console.error('      Fix: Go to about:config and set network.websocket.enabled = true');
+          console.error('   4. Corporate proxy/VPN blocking WebSockets');
+          console.error('      Fix: Try without VPN or configure proxy to allow WebSockets');
+          console.error('');
+          console.error('🔧 Test WebSocket manually: Open console and run:');
+          console.error('   new WebSocket("wss://echo.websocket.org")');
+          console.error('   If this fails, WebSockets are blocked on your system');
           updateState('error');
-          reject(error);
-        };
+          reject(lastError || new Error('All signaling servers failed'));
+          return;
+        }
 
-        signalingSocket.onclose = () => {
-          console.log('🔌 [Signaling] WebSocket closed');
-        };
-      } catch (err) {
-        reject(err);
-      }
+        const server = SIGNALING_SERVERS[attemptCount];
+        const wsUrl = `${server.url}?key=${server.key}&id=${peerId}&token=${generateToken()}`;
+        console.log(`🔌 Connecting to signaling server (${attemptCount + 1}/${SIGNALING_SERVERS.length}): ${server.name}`);
+        console.log(`   URL: ${wsUrl}`);
+
+        try {
+          signalingSocket = new WebSocket(wsUrl);
+
+          // Set a connection timeout
+          const connectionTimer = setTimeout(() => {
+            console.warn(`⏱️ [Signaling] Connection timeout for ${server.name}, trying next...`);
+            signalingSocket.close();
+            attemptCount++;
+            tryNextServer();
+          }, 5000); // 5 second timeout per server
+
+          signalingSocket.onopen = () => {
+            clearTimeout(connectionTimer);
+            console.log(`✅ [Signaling] Connected to ${server.name}`);
+            currentServerIndex = attemptCount;
+            resolve();
+          };
+
+          signalingSocket.onmessage = (event) => {
+            try {
+              const message = JSON.parse(event.data);
+              console.log('📨 [Signaling] Received:', message);
+              handleSignalingMessage(message);
+            } catch (err) {
+              console.error('❌ [Signaling] Failed to parse message:', err);
+            }
+          };
+
+          signalingSocket.onerror = (error) => {
+            clearTimeout(connectionTimer);
+            console.warn(`⚠️ [Signaling] Failed to connect to ${server.name}:`, error);
+            lastError = error;
+            attemptCount++;
+            tryNextServer();
+          };
+
+          signalingSocket.onclose = () => {
+            // Only log close if we were previously connected
+            if (currentServerIndex === attemptCount) {
+              console.log('🔌 [Signaling] WebSocket closed');
+            }
+          };
+        } catch (err) {
+          console.warn(`⚠️ [Signaling] Exception connecting to ${server.name}:`, err);
+          lastError = err;
+          attemptCount++;
+          tryNextServer();
+        }
+      };
+
+      tryNextServer();
     });
+  };
+
+  /**
+   * Get the currently connected signaling server info
+   */
+  const getConnectedServer = () => {
+    if (currentServerIndex < SIGNALING_SERVERS.length) {
+      return SIGNALING_SERVERS[currentServerIndex];
+    }
+    return null;
+  };
+
+  /**
+   * Generate a peer ID without connecting
+   * Useful for getting a stable peer ID before QR code generation
+   */
+  const generatePeerId = () => {
+    return `web-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  };
+
+  /**
+   * Pre-connect to signaling server and return connection info
+   * Used to establish connection before QR code generation
+   * @returns {Promise<{peerId: string, server: Object}>}
+   */
+  const preConnect = async () => {
+    const peerId = generatePeerId();
+    console.log('🔵 WebRTCSync.preConnect() generating peerId:', peerId);
+
+    // Store peer ID
+    myPeerId = peerId;
+
+    // Connect to signaling server with fallback
+    await connectToSignalingServer(peerId);
+
+    const server = getConnectedServer();
+    console.log('✅ Pre-connected to signaling server:', server?.name);
+
+    return {
+      peerId,
+      server
+    };
   };
 
   /**
@@ -1120,6 +1269,7 @@ const WebRTCSync = (() => {
   // Public API
   return {
     init,
+    preConnect,
     disconnect,
     onData,
     onStateChange,
@@ -1128,6 +1278,8 @@ const WebRTCSync = (() => {
     on,
     once,
     off,
-    isConnected
+    isConnected,
+    getConnectedServer,
+    getPeerId: () => myPeerId
   };
 })();

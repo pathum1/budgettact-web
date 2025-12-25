@@ -20,9 +20,12 @@ const QRGenerator = (() => {
   /**
    * Initialize QR code generation and display
    * @param {string} containerId - ID of container element for QR code
+   * @param {Object} options - Optional configuration
+   * @param {string} options.peerId - Existing peer ID to use (if already connected to signaling server)
+   * @param {string} options.signalingServer - Signaling server URL to include in QR
    * @returns {string|null} Generated peer ID or null if failed
    */
-  const init = (containerId) => {
+  const init = (containerId, options = {}) => {
     console.log('QRGenerator.init called with container:', containerId);
 
     const container = document.getElementById(containerId);
@@ -36,17 +39,25 @@ const QRGenerator = (() => {
     // Clear any existing QR code
     container.innerHTML = '';
 
-    // Generate new peer ID
-    currentPeerId = generatePeerId();
-    console.log('Generated peer ID:', currentPeerId);
+    // Use provided peer ID or generate a new one
+    currentPeerId = options.peerId || generatePeerId();
+    console.log('Using peer ID:', currentPeerId, options.peerId ? '(from preConnect)' : '(newly generated)');
 
     // Create QR data payload
+    // Keep version 1.0 for backward compatibility with Android app
+    // Extra fields like signalingServer are safely ignored by older parsers
     const qrData = {
       version: '1.0',
       type: 'budgettact-sync',
       peerId: currentPeerId,
       timestamp: new Date().toISOString()
     };
+
+    // Add signaling server if provided
+    if (options.signalingServer) {
+      qrData.signalingServer = options.signalingServer;
+      console.log('Including signaling server in QR:', options.signalingServer);
+    }
 
     console.log('QR data:', qrData);
 

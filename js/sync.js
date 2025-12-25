@@ -371,8 +371,32 @@ const Sync = (() => {
    */
   async function initializeWebRTCSync(showStatusCallback, showErrorCallback) {
     try {
-      // Generate QR code with peer ID
-      const peerId = QRGenerator.init('qrCodeContainer');
+      if (showStatusCallback) {
+        showStatusCallback('Connecting to signaling server...');
+      }
+
+      // First, pre-connect to signaling server with fallback support
+      // This ensures we know which server works before generating the QR code
+      let connectionInfo;
+      try {
+        connectionInfo = await WebRTCSync.preConnect();
+        console.log('✅ Pre-connected to signaling server:', connectionInfo.server?.name);
+      } catch (error) {
+        console.error('❌ Failed to connect to any signaling server:', error);
+        if (showErrorCallback) {
+          showErrorCallback('Failed to connect to signaling server. Please check your internet connection and try again.');
+        }
+        throw error;
+      }
+
+      // Generate QR code with peer ID AND signaling server info
+      const qrOptions = {
+        peerId: connectionInfo.peerId  // Use the peer ID from preConnect
+      };
+      if (connectionInfo.server) {
+        qrOptions.signalingServer = connectionInfo.server.url;
+      }
+      const peerId = QRGenerator.init('qrCodeContainer', qrOptions);
 
       if (!peerId) {
         throw new Error('Failed to generate QR code');

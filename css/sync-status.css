@@ -2,35 +2,30 @@
 .sync-status {
   display: flex;
   align-items: center;
-  background: var(--surface-2, #2b2930);
-  border-radius: 8px;
-  padding: 6px 12px;
-  border: 1px solid var(--outline-variant, #49454e);
-  margin-right: 12px;
-}
-
-.status-indicator {
-  display: flex;
-  align-items: center;
   gap: 8px;
+  background: var(--surface-2, #2b2930);
+  border-radius: 20px;
+  padding: 6px 14px;
+  border: 1px solid var(--outline-variant, #49454e);
 }
 
 .status-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #ccc;
+  background: var(--text-secondary, #cac4cf);
+  flex-shrink: 0;
 }
 
 .status-dot.connected {
-  background: var(--primary-color, #6f61ef);
-  box-shadow: 0 0 0 6px rgba(111, 97, 239, 0.18);
+  background: var(--success-color, #59d666);
+  box-shadow: 0 0 0 3px rgba(89, 214, 102, 0.2);
   animation: pulse 2s infinite;
 }
 
 .status-dot.syncing {
   background: var(--primary-color, #6f61ef);
-  animation: spin 1s linear infinite;
+  animation: pulse-fast 0.8s infinite;
 }
 
 .status-dot.offline {
@@ -43,18 +38,19 @@
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50% { opacity: 0.6; }
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+@keyframes pulse-fast {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.1); }
 }
 
-.status-text {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--text-color, #e6e1e6);
+.sync-status .status-text {
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-secondary, #cac4cf);
+  white-space: nowrap;
 }
 
 .status-details {

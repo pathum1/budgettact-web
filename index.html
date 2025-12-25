@@ -19,8 +19,8 @@
     <header>
         <div class="header-content">
             <div class="header-left">
-                <button id="sidebar-toggle" class="btn-icon" title="Toggle Sidebar">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <button id="sidebar-toggle" class="btn-icon sidebar-toggle" title="Toggle Sidebar">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="3" y1="12" x2="21" y2="12"></line>
                         <line x1="3" y1="6" x2="21" y2="6"></line>
                         <line x1="3" y1="18" x2="21" y2="18"></line>
@@ -28,19 +28,32 @@
                 </button>
                 <h1>BudgetTact</h1>
             </div>
-            <div class="header-buttons">
+            <div class="header-right">
+                <div id="sync-status" class="sync-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Last sync: Never</span>
+                </div>
+                <button id="theme-toggle" class="btn-icon" title="Toggle Light/Dark Theme">
+                    <svg id="theme-icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                    </svg>
+                    <svg id="theme-icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: none;">
+                        <circle cx="12" cy="12" r="5"></circle>
+                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                    </svg>
+                </button>
                 <button id="sync-btn" class="btn-icon" title="Sync with Phone">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="23 4 23 10 17 10"></polyline>
                         <polyline points="1 20 1 14 7 14"></polyline>
                         <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                    </svg>
-                </button>
-                <button id="import-btn" class="btn-icon" title="Import Data (Manual)">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="7 10 12 15 17 10"></polyline>
-                        <line x1="12" y1="15" x2="12" y2="3"></line>
                     </svg>
                 </button>
             </div>
@@ -215,6 +228,9 @@
     <script src="https://unpkg.com/dexie@3/dist/dexie.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- WebRTC Adapter for cross-browser compatibility -->
+    <script src="https://cdn.jsdelivr.net/npm/webrtc-adapter@9.0.1/out/adapter.min.js"
+            onerror="console.error('Failed to load adapter.js - WebRTC may not work!')"></script>
     <script src="js/utils.js"></script>
     <script src="js/pairing-manager.js"></script>
     <script src="js/hash-service.js"></script>

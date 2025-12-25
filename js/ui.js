@@ -11,6 +11,9 @@ const UI = (() => {
   // State for chart view type
   let chartViewType = 'cumulative'; // 'cumulative' or 'daily'
 
+  // State for selected week in weekly expenses
+  let selectedWeek = null; // null = current week
+
   // Store current chart data for re-rendering without full dashboard refresh
   let currentChartData = {
     transactions: [],
@@ -36,6 +39,92 @@ const UI = (() => {
     const date = new Date();
     date.setMonth(date.getMonth() + offset);
     return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
+  /**
+   * Get weeks in a month
+   */
+  function getWeeksInMonth(monthYear) {
+    const [year, month] = monthYear.split('-').map(Number);
+    const firstDay = new Date(year, month - 1, 1);
+    const lastDay = new Date(year, month, 0);
+    const daysInMonth = lastDay.getDate();
+
+    // Calculate number of weeks (ceiling of days / 7)
+    const weeks = [];
+    let weekStart = 1;
+    let weekNum = 1;
+
+    while (weekStart <= daysInMonth) {
+      const weekEnd = Math.min(weekStart + 6, daysInMonth);
+      weeks.push({
+        weekNum,
+        startDay: weekStart,
+        endDay: weekEnd,
+        startDate: new Date(year, month - 1, weekStart),
+        endDate: new Date(year, month - 1, weekEnd, 23, 59, 59)
+      });
+      weekStart = weekEnd + 1;
+      weekNum++;
+    }
+
+    return weeks;
+  }
+
+  /**
+   * Get current week number in the month
+   */
+  function getCurrentWeekInMonth(monthYear) {
+    const today = new Date();
+    const [year, month] = monthYear.split('-').map(Number);
+
+    // If not current month, return 1
+    if (today.getFullYear() !== year || today.getMonth() + 1 !== month) {
+      return 1;
+    }
+
+    const dayOfMonth = today.getDate();
+    return Math.ceil(dayOfMonth / 7);
+  }
+
+  /**
+   * Get expenses for a specific week
+   */
+  function getWeekExpenses(transactions, week) {
+    return transactions.filter(t => {
+      if (t.transactionType !== 'expense') return false;
+      const date = new Date(t.transactionDate);
+      return date >= week.startDate && date <= week.endDate;
+    });
+  }
+
+  /**
+   * Get daily expenses for a week (array of 7 days, Mon-Sun or actual days)
+   */
+  function getWeeklyDailyExpenses(transactions, week) {
+    const dailyExpenses = [];
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+    for (let day = week.startDay; day <= week.endDay; day++) {
+      const date = new Date(week.startDate);
+      date.setDate(day);
+
+      const dayExpenses = transactions.filter(t => {
+        if (t.transactionType !== 'expense') return false;
+        const tDate = new Date(t.transactionDate);
+        return tDate.getDate() === day &&
+               tDate.getMonth() === date.getMonth() &&
+               tDate.getFullYear() === date.getFullYear();
+      }).reduce((sum, t) => sum + Math.abs(t.transactionAmount), 0);
+
+      dailyExpenses.push({
+        day: day,
+        dayName: dayNames[date.getDay()],
+        amount: dayExpenses
+      });
+    }
+
+    return dailyExpenses;
   }
 
   /**
@@ -71,6 +160,25 @@ const UI = (() => {
         .filter(t => t.transactionType === 'expense')
         .reduce((sum, t) => sum + Math.abs(t.transactionAmount), 0);
 
+      const totalIncome = transactions
+        .filter(t => t.transactionType === 'income')
+        .reduce((sum, t) => sum + Math.abs(t.transactionAmount), 0);
+
+      // Calculate weeks for the current month
+      const weeks = getWeeksInMonth(currentMonth);
+      const currentWeekNum = getCurrentWeekInMonth(currentMonth);
+      if (selectedWeek === null) {
+        selectedWeek = currentWeekNum;
+      }
+      const activeWeek = weeks[Math.min(selectedWeek - 1, weeks.length - 1)];
+
+      // Calculate weekly expenses for selected week
+      const weeklyExpenses = getWeekExpenses(transactions, activeWeek)
+        .reduce((sum, t) => sum + Math.abs(t.transactionAmount), 0);
+
+      // Get daily data for the week chart
+      const weeklyDailyData = getWeeklyDailyExpenses(transactions, activeWeek);
+
       const currency = metadata?.currency || 'USD';
       const monthlyIncome = metadata?.monthlyIncome || 0;
 
@@ -90,8 +198,18 @@ const UI = (() => {
         })
       );
 
+      // Calculate total budget and spent (must be after categoriesWithSpent is defined)
+      const totalBudget = categoriesWithSpent.reduce((sum, c) => sum + (c.budgetAmount || 0), 0);
+      const totalSpentAllCategories = categoriesWithSpent.reduce((sum, c) => sum + c.spent, 0);
+      const totalAvailable = totalBudget - totalSpentAllCategories;
+
       // Calculate biller balances
       const billersWithBalances = calculateBillerBalances(billers, allTransactions);
+
+      // Generate week selector buttons
+      const weekButtons = weeks.map((w, i) => `
+        <button class="week-btn ${selectedWeek === w.weekNum ? 'active' : ''}" data-week="${w.weekNum}">W${w.weekNum}</button>
+      `).join('');
 
       let html = `
         <div class="month-navigation">
@@ -116,39 +234,115 @@ const UI = (() => {
         </div>
         <div class="dashboard-container">
           <div class="dashboard-main">
-            <div class="dashboard-grid">
+            <!-- Top Row: 3 Stat Cards -->
+            <div class="stats-row">
+              <div class="stat-card-new">
+                <div class="stat-header">
+                  <span class="stat-label">Monthly Income</span>
+                  <div class="stat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="12" y1="1" x2="12" y2="23"></line>
+                      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                    </svg>
+                  </div>
+                </div>
+                <div class="stat-value">${Utils.formatCurrency(totalIncome, currency)}</div>
+                <div class="stat-change positive">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="18 15 12 9 6 15"></polyline>
+                  </svg>
+                  <span>This month</span>
+                </div>
+              </div>
+
+              <div class="stat-card-new">
+                <div class="stat-header">
+                  <span class="stat-label">Monthly Expenses</span>
+                  <div class="stat-icon" style="background: rgba(255, 107, 107, 0.15);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#ff6b6b" stroke-width="2">
+                      <path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+                    </svg>
+                  </div>
+                </div>
+                <div class="stat-value">${Utils.formatCurrency(totalSpent, currency)}</div>
+                <div class="stat-change negative">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                  <span>This month</span>
+                </div>
+              </div>
+
+              <div class="stat-card-new weekly-card">
+                <div class="stat-header">
+                  <span class="stat-label">Weekly Expenses</span>
+                  <div class="week-selector">${weekButtons}</div>
+                </div>
+                <div class="stat-value">${Utils.formatCurrency(weeklyExpenses, currency)}</div>
+                <div class="weekly-chart-container">
+                  <canvas id="weeklyChart"></canvas>
+                </div>
+              </div>
+            </div>
+
+            <!-- Middle Row: Expense Trend (left), Category Budget (right expanded) -->
+            <div class="dashboard-grid two-col">
               <div class="dashboard-card">
                 <div class="card-title-section">
-                  <h3>Monthly Expenses</h3>
+                  <h3>Expense Trend</h3>
                   <div class="chart-view-toggle">
                     <button class="toggle-btn ${chartViewType === 'cumulative' ? 'active' : ''}" data-view="cumulative">Cumulative</button>
                     <button class="toggle-btn ${chartViewType === 'daily' ? 'active' : ''}" data-view="daily">Daily</button>
                   </div>
                 </div>
-                <div class="card-amount">${Utils.formatCurrency(totalSpent, currency)}</div>
                 <div class="chart-container">
                   <canvas id="spendingChart"></canvas>
                 </div>
               </div>
 
-              <div class="dashboard-card">
+              <div class="dashboard-card category-budget-card">
                 <div class="card-title-section">
                   <h3>Category Budget Overview</h3>
                 </div>
-                <div class="chart-container doughnut">
-                  <canvas id="categoryChart"></canvas>
+                <div class="category-budget-content">
+                  <div class="budget-left-section">
+                    <div class="budget-chart-section">
+                      <div class="chart-container doughnut">
+                        <canvas id="categoryChart"></canvas>
+                      </div>
+                    </div>
+                    <div class="budget-summary-compact">
+                      <div class="budget-summary-row">
+                        <span class="budget-dot budget"></span>
+                        <span class="budget-label">Budget</span>
+                        <span class="budget-value">${Utils.formatCurrency(totalBudget, currency)}</span>
+                      </div>
+                      <div class="budget-summary-row">
+                        <span class="budget-dot spent"></span>
+                        <span class="budget-label">Spent</span>
+                        <span class="budget-value spent">${Utils.formatCurrency(totalSpentAllCategories, currency)}</span>
+                      </div>
+                      <div class="budget-summary-row">
+                        <span class="budget-dot remaining"></span>
+                        <span class="budget-label">Left</span>
+                        <span class="budget-value ${totalAvailable < 0 ? 'negative' : 'positive'}">${Utils.formatCurrency(totalAvailable, currency)}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="category-breakdown" id="categoryBreakdown"></div>
                 </div>
-                <div class="category-legend" id="categoryLegend"></div>
               </div>
             </div>
 
+            <!-- Recent Activity Section -->
             <div class="full-width-card">
               <div class="card-header">
-                <h3 class="card-title">Recent Transactions</h3>
+                <h3 class="card-title">Recent Activity</h3>
               </div>
-              ${renderTransactionsList(transactions.slice(0, 10), categories, currency)}
+              ${renderTransactionsList(transactions.slice(0, 8), categories, currency)}
             </div>
 
+            <!-- Goals Section -->
             <div class="full-width-card">
               <div class="card-header">
                 <h3 class="card-title">Active Goals</h3>
@@ -172,10 +366,12 @@ const UI = (() => {
         monthYear: currentMonth
       };
 
-      // Render charts after DOM is updated
+      // Render charts and lists after DOM is updated
       setTimeout(() => {
         renderSpendingLineChart(transactions, currency, currentMonth);
+        renderWeeklyBarChart(weeklyDailyData, currency);
         renderCategoryDoughnutChart(categoriesWithSpent, currency);
+        renderCategoryBreakdown(categoriesWithSpent, currency);
 
         // Add month navigation event listeners
         const prevBtn = document.getElementById('prev-month');
@@ -184,6 +380,7 @@ const UI = (() => {
         if (prevBtn) {
           prevBtn.addEventListener('click', () => {
             selectedMonthOffset--;
+            selectedWeek = null; // Reset to current week for new month
             renderDashboard();
           });
         }
@@ -191,9 +388,23 @@ const UI = (() => {
         if (nextBtn) {
           nextBtn.addEventListener('click', () => {
             selectedMonthOffset++;
+            selectedWeek = null; // Reset to current week for new month
             renderDashboard();
           });
         }
+
+        // Add week selector event listeners
+        const weekBtns = document.querySelectorAll('.week-btn');
+        weekBtns.forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            const newWeek = parseInt(e.target.dataset.week);
+            if (newWeek !== selectedWeek) {
+              selectedWeek = newWeek;
+              // Only update the weekly card instead of re-rendering the entire dashboard
+              await updateWeeklyExpenseCard(currentMonth, selectedWeek);
+            }
+          });
+        });
 
         // Add chart view toggle event listeners
         const toggleBtns = document.querySelectorAll('.chart-view-toggle .toggle-btn');
@@ -380,11 +591,10 @@ const UI = (() => {
   }
 
   /**
-   * Render category doughnut chart
+   * Render weekly bar chart
    */
-  function renderCategoryDoughnutChart(categories, currency) {
-    const canvas = document.getElementById('categoryChart');
-    const legendContainer = document.getElementById('categoryLegend');
+  function renderWeeklyBarChart(dailyData, currency) {
+    const canvas = document.getElementById('weeklyChart');
     if (!canvas) return;
 
     // Destroy existing chart if any
@@ -392,60 +602,152 @@ const UI = (() => {
       canvas.chart.destroy();
     }
 
-    // Filter out categories with no budget or spending
-    const validCategories = categories.filter(c => c.budgetAmount > 0 || c.spent > 0);
-
-    if (validCategories.length === 0) {
-      canvas.parentElement.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 40px;">No category data available</p>';
-      return;
-    }
-
-    // Generate vibrant, distinct colors for each category
-    const colors = [
-      '#6E61EF', // Primary purple
-      '#59d666', // Success green
-      '#ff6b6b', // Danger red
-      '#ff9800', // Warning orange
-      '#2196F3', // Blue
-      '#e91e63', // Pink
-      '#00bcd4', // Cyan
-      '#9c27b0', // Purple
-      '#4caf50', // Green
-      '#ff5722', // Deep orange
-      '#795548', // Brown
-      '#607d8b'  // Blue grey
-    ];
-
-    const labels = validCategories.map(c => c.categoryType);
-    const budgetData = validCategories.map(c => c.budgetAmount);
-    const spentData = validCategories.map(c => c.spent);
-    const chartColors = validCategories.map((_, i) => colors[i % colors.length]);
-
     const ctx = canvas.getContext('2d');
 
-    // Create combined data (budget + spent)
-    const combinedData = validCategories.map(c => c.budgetAmount + c.spent);
+    // Create gradient
+    const gradient = ctx.createLinearGradient(0, 0, 0, 80);
+    gradient.addColorStop(0, 'rgba(89, 214, 102, 0.9)');
+    gradient.addColorStop(1, 'rgba(89, 214, 102, 0.3)');
 
     canvas.chart = new Chart(ctx, {
-      type: 'doughnut',
+      type: 'bar',
       data: {
-        labels: labels,
+        labels: dailyData.map(d => d.dayName),
         datasets: [{
-          data: combinedData,
-          backgroundColor: chartColors,
-          borderColor: '#2b2930',
-          borderWidth: 3,
-          hoverOffset: 10
+          data: dailyData.map(d => d.amount),
+          backgroundColor: gradient,
+          borderRadius: 4,
+          borderSkipped: false,
+          barThickness: 12
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        cutout: '65%',
         plugins: {
-          legend: {
-            display: false
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: 'rgba(43, 41, 48, 0.95)',
+            titleColor: '#e6e1e6',
+            bodyColor: '#e6e1e6',
+            padding: 8,
+            displayColors: false,
+            callbacks: {
+              label: (ctx) => Utils.formatCurrency(ctx.parsed.y, currency)
+            }
+          }
+        },
+        scales: {
+          y: {
+            display: false,
+            beginAtZero: true
           },
+          x: {
+            grid: { display: false },
+            ticks: {
+              color: '#cac4cf',
+              font: { size: 9 }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Update only the weekly expense card without re-rendering entire dashboard
+   */
+  async function updateWeeklyExpenseCard(currentMonth, weekNum) {
+    try {
+      // Get transactions for the current month
+      const transactions = await Storage.getTransactionsByMonth(currentMonth);
+      const metadata = await Storage.getMetadata();
+      const currency = metadata?.currency || 'USD';
+
+      // Calculate weeks for the current month
+      const weeks = getWeeksInMonth(currentMonth);
+      const activeWeek = weeks[Math.min(weekNum - 1, weeks.length - 1)];
+
+      // Calculate weekly expenses for selected week
+      const weeklyExpenses = getWeekExpenses(transactions, activeWeek)
+        .reduce((sum, t) => sum + Math.abs(t.transactionAmount), 0);
+
+      // Get daily data for the week chart
+      const weeklyDailyData = getWeeklyDailyExpenses(transactions, activeWeek);
+
+      // Update the stat value
+      const statValueElement = document.querySelector('.weekly-card .stat-value');
+      if (statValueElement) {
+        statValueElement.textContent = Utils.formatCurrency(weeklyExpenses, currency);
+      }
+
+      // Update active week button
+      const weekBtns = document.querySelectorAll('.week-btn');
+      weekBtns.forEach(btn => {
+        const btnWeek = parseInt(btn.dataset.week);
+        if (btnWeek === weekNum) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+
+      // Re-render only the weekly chart
+      renderWeeklyBarChart(weeklyDailyData, currency);
+    } catch (error) {
+      console.error('Error updating weekly expense card:', error);
+    }
+  }
+
+  /**
+   * Render category doughnut chart with percentage indicators
+   */
+  function renderCategoryDoughnutChart(categories, currency) {
+    const canvas = document.getElementById('categoryChart');
+    if (!canvas) return;
+
+    // Destroy existing chart if any
+    if (canvas.chart) {
+      canvas.chart.destroy();
+    }
+
+    // Filter categories with budget
+    const validCategories = categories.filter(c => c.budgetAmount > 0 || c.spent > 0);
+
+    if (validCategories.length === 0) {
+      canvas.parentElement.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 40px;">No category data</p>';
+      return;
+    }
+
+    const colors = [
+      '#6E61EF', '#59d666', '#ff6b6b', '#ff9800', '#2196F3',
+      '#e91e63', '#00bcd4', '#9c27b0', '#4caf50', '#ff5722'
+    ];
+
+    const ctx = canvas.getContext('2d');
+
+    // Data shows spent amounts (what's been used)
+    const spentData = validCategories.map(c => c.spent);
+    const chartColors = validCategories.map((_, i) => colors[i % colors.length]);
+
+    canvas.chart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: validCategories.map(c => c.categoryType),
+        datasets: [{
+          data: spentData,
+          backgroundColor: chartColors,
+          borderColor: '#2b2930',
+          borderWidth: 2,
+          hoverOffset: 8
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '70%',
+        plugins: {
+          legend: { display: false },
           tooltip: {
             backgroundColor: 'rgba(43, 41, 48, 0.95)',
             titleColor: '#e6e1e6',
@@ -456,10 +758,11 @@ const UI = (() => {
             callbacks: {
               label: function(context) {
                 const category = validCategories[context.dataIndex];
+                const percentage = Utils.calculatePercentage(category.spent, category.budgetAmount);
                 return [
-                  `Budget: ${Utils.formatCurrency(category.budgetAmount, currency)}`,
                   `Spent: ${Utils.formatCurrency(category.spent, currency)}`,
-                  `Remaining: ${Utils.formatCurrency(category.budgetAmount - category.spent, currency)}`
+                  `Budget: ${Utils.formatCurrency(category.budgetAmount, currency)}`,
+                  `${percentage.toFixed(0)}% used`
                 ];
               }
             }
@@ -467,28 +770,90 @@ const UI = (() => {
         }
       }
     });
+  }
 
-    // Render custom legend
-    if (legendContainer) {
-      legendContainer.innerHTML = validCategories.map((category, index) => {
-        const percentage = Utils.calculatePercentage(category.spent, category.budgetAmount);
-        const remaining = category.budgetAmount - category.spent;
-        const icon = Utils.getCategoryIcon(category.iconName);
-        return `
-          <div class="legend-item" style="border-left-color: ${chartColors[index]}">
-            <div class="legend-left">
-              <div class="legend-color" style="background-color: ${chartColors[index]}"></div>
-              <span class="category-icon">${icon}</span>
-              <span class="legend-name">${Utils.escapeHtml(category.categoryType)}</span>
-            </div>
-            <div class="legend-right">
-              <span class="legend-amount">${Utils.formatCurrency(category.spent, currency)} / ${Utils.formatCurrency(category.budgetAmount, currency)}</span>
-              <span class="legend-percentage">${percentage.toFixed(0)}% used</span>
-            </div>
-          </div>
-        `;
-      }).join('');
+  /**
+   * Render category breakdown list with progress bars
+   */
+  function renderCategoryBreakdown(categories, currency) {
+    const container = document.getElementById('categoryBreakdown');
+    if (!container) return;
+
+    // Filter and sort by spent amount
+    const validCategories = categories
+      .filter(c => c.budgetAmount > 0 || c.spent > 0)
+      .sort((a, b) => b.spent - a.spent)
+      .slice(0, 5);
+
+    if (validCategories.length === 0) {
+      container.innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 10px;">No categories</p>';
+      return;
     }
+
+    const colors = [
+      '#6E61EF', '#59d666', '#ff6b6b', '#ff9800', '#2196F3'
+    ];
+
+    container.innerHTML = validCategories.map((category, index) => {
+      const percentage = Utils.calculatePercentage(category.spent, category.budgetAmount);
+      const icon = Utils.getCategoryIcon(category.iconName);
+      const color = colors[index % colors.length];
+      const progressClass = percentage >= 100 ? 'over' : percentage >= 80 ? 'warning' : '';
+
+      return `
+        <div class="category-breakdown-item">
+          <div class="category-breakdown-header">
+            <div class="category-breakdown-left">
+              <span class="category-breakdown-icon" style="color: ${color};">${icon}</span>
+              <span class="category-breakdown-name">${Utils.escapeHtml(category.categoryType)}</span>
+            </div>
+            <span class="category-breakdown-percent ${progressClass}">${percentage.toFixed(0)}%</span>
+          </div>
+          <div class="category-breakdown-bar">
+            <div class="category-breakdown-fill ${progressClass}" style="width: ${Math.min(percentage, 100)}%; background: ${color};"></div>
+          </div>
+          <div class="category-breakdown-amounts">
+            <span>${Utils.formatCurrency(category.spent, currency)} spent</span>
+            <span>of ${Utils.formatCurrency(category.budgetAmount, currency)}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /**
+   * Render compact transactions list for dashboard
+   */
+  function renderCompactTransactionsList(transactions, categories, currency) {
+    if (transactions.length === 0) {
+      return '<p style="text-align: center; color: var(--text-secondary); padding: 20px;">No recent transactions</p>';
+    }
+
+    // Create category lookup map
+    const categoryMap = {};
+    categories.forEach(c => {
+      categoryMap[c.id] = {
+        name: c.categoryType,
+        icon: Utils.getCategoryIcon(c.iconName)
+      };
+    });
+
+    return transactions.map(t => {
+      const category = categoryMap[t.transactionCategory] || { name: 'Unknown', icon: '?' };
+      const amountClass = t.transactionType === 'expense' ? 'expense' : 'income';
+      const amountPrefix = t.transactionType === 'expense' ? '-' : '+';
+
+      return `
+        <div class="compact-transaction-item">
+          <div class="compact-transaction-icon">${category.icon}</div>
+          <div class="compact-transaction-info">
+            <span class="compact-transaction-name">${Utils.escapeHtml(t.merchantName)}</span>
+            <span class="compact-transaction-date">${Utils.formatRelativeDate(t.transactionDate)}</span>
+          </div>
+          <span class="compact-transaction-amount ${amountClass}">${amountPrefix}${Utils.formatCurrency(t.transactionAmount, currency)}</span>
+        </div>
+      `;
+    }).join('');
   }
 
   /**
