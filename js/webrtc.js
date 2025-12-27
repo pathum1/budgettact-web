@@ -4,6 +4,166 @@
  * Uses manual signaling through PeerJS server infrastructure
  */
 
+/**
+ * Persistent Sync Diagnostics Logger
+ * Stores logs in localStorage to survive page navigation/reload
+ * Access via: SyncDiagnostics.dump() or SyncDiagnostics.getAll()
+ */
+const SyncDiagnostics = (() => {
+  const STORAGE_KEY = 'budgettact_sync_diagnostics';
+  const MAX_ENTRIES = 500; // Limit to prevent localStorage overflow
+  const SESSION_KEY = 'budgettact_sync_session';
+
+  // Generate or retrieve session ID
+  const getSessionId = () => {
+    let sessionId = sessionStorage.getItem(SESSION_KEY);
+    if (!sessionId) {
+      sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+      sessionStorage.setItem(SESSION_KEY, sessionId);
+    }
+    return sessionId;
+  };
+
+  const sessionId = getSessionId();
+  const sessionStart = Date.now();
+
+  // Get all stored logs
+  const getAll = () => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      console.error('Failed to read sync diagnostics:', e);
+      return [];
+    }
+  };
+
+  // Save logs to storage
+  const save = (entries) => {
+    try {
+      // Trim to max entries
+      const trimmed = entries.slice(-MAX_ENTRIES);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    } catch (e) {
+      console.error('Failed to save sync diagnostics:', e);
+      // Try clearing old entries if storage is full
+      try {
+        const trimmed = entries.slice(-100);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+      } catch (e2) {
+        console.error('Failed to save even trimmed diagnostics:', e2);
+      }
+    }
+  };
+
+  // Log an entry
+  const log = (category, message, data = null) => {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      elapsed: Date.now() - sessionStart,
+      sessionId,
+      category,
+      message,
+      data: data ? JSON.parse(JSON.stringify(data)) : null // Deep clone to avoid circular refs
+    };
+
+    // Also log to console
+    const consoleMsg = `📋 [${category}] ${message}`;
+    if (data) {
+      console.log(consoleMsg, data);
+    } else {
+      console.log(consoleMsg);
+    }
+
+    // Append to storage
+    const entries = getAll();
+    entries.push(entry);
+    save(entries);
+
+    return entry;
+  };
+
+  // Log with specific categories
+  const logSync = (message, data) => log('SYNC', message, data);
+  const logNav = (message, data) => log('NAV', message, data);
+  const logDB = (message, data) => log('DB', message, data);
+  const logError = (message, data) => log('ERROR', message, data);
+  const logState = (message, data) => log('STATE', message, data);
+
+  // Dump all logs to console (for debugging)
+  const dump = () => {
+    const entries = getAll();
+    console.log('='.repeat(60));
+    console.log('SYNC DIAGNOSTICS DUMP - Total entries:', entries.length);
+    console.log('='.repeat(60));
+
+    // Group by session
+    const bySession = {};
+    entries.forEach(e => {
+      if (!bySession[e.sessionId]) bySession[e.sessionId] = [];
+      bySession[e.sessionId].push(e);
+    });
+
+    Object.keys(bySession).forEach(sid => {
+      console.log(`\n--- Session: ${sid} (${bySession[sid].length} entries) ---`);
+      bySession[sid].forEach(e => {
+        const dataStr = e.data ? ` | ${JSON.stringify(e.data)}` : '';
+        console.log(`[${e.timestamp}] +${e.elapsed}ms [${e.category}] ${e.message}${dataStr}`);
+      });
+    });
+
+    console.log('='.repeat(60));
+    return entries;
+  };
+
+  // Get logs for current session only
+  const getCurrentSession = () => {
+    return getAll().filter(e => e.sessionId === sessionId);
+  };
+
+  // Clear all logs
+  const clear = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    console.log('Sync diagnostics cleared');
+  };
+
+  // Get summary of recent sync attempts
+  const getSummary = () => {
+    const entries = getAll();
+    const syncStarts = entries.filter(e => e.message.includes('START') || e.message.includes('metadata_received'));
+    const syncCompletes = entries.filter(e => e.message.includes('COMPLETED') || e.message.includes('sync_complete'));
+    const errors = entries.filter(e => e.category === 'ERROR');
+    const navEvents = entries.filter(e => e.category === 'NAV');
+
+    return {
+      totalEntries: entries.length,
+      syncAttempts: syncStarts.length,
+      syncCompletes: syncCompletes.length,
+      errors: errors.length,
+      navigationEvents: navEvents.length,
+      lastEntry: entries[entries.length - 1],
+      currentSession: sessionId
+    };
+  };
+
+  // Log page load/navigation
+  log('NAV', 'Page loaded/navigated', {
+    url: window.location.href,
+    hash: window.location.hash,
+    referrer: document.referrer,
+    sessionId
+  });
+
+  // Expose globally for console access
+  window.SyncDiagnostics = {
+    log, logSync, logNav, logDB, logError, logState,
+    getAll, getCurrentSession, dump, clear, getSummary,
+    sessionId
+  };
+
+  return window.SyncDiagnostics;
+})();
+
 const WebRTCSync = (() => {
   let peerConnection = null;
   let dataChannel = null;
@@ -14,6 +174,7 @@ const WebRTCSync = (() => {
   let remotePeerId = null;
   let connectionTimeout = null;
   const listeners = {};
+  const dataHandlers = []; // Multiple data handlers for bidirectional sync
 
   // PeerJS signaling server configuration with fallbacks
   // Primary: 0.peerjs.com (more reliable), Fallback: peerjs.com
@@ -244,20 +405,38 @@ const WebRTCSync = (() => {
   /**
    * Pre-connect to signaling server and return connection info
    * Used to establish connection before QR code generation
+   * IMPORTANT: This now does a GRACEFUL transition - keeping the old connection
+   * alive until the new one is established to prevent race conditions
    * @returns {Promise<{peerId: string, server: Object}>}
    */
   const preConnect = async () => {
     const peerId = generatePeerId();
     console.log('🔵 WebRTCSync.preConnect() generating peerId:', peerId);
 
-    // Store peer ID
+    // Store reference to old socket for graceful cleanup
+    const oldSocket = signalingSocket;
+    const oldPeerId = myPeerId;
+
+    // Store new peer ID
     myPeerId = peerId;
 
     // Connect to signaling server with fallback
+    // This creates a NEW socket (doesn't close old one yet)
     await connectToSignalingServer(peerId);
 
     const server = getConnectedServer();
     console.log('✅ Pre-connected to signaling server:', server?.name);
+
+    // NOW close the old socket after the new one is established
+    // This eliminates the race window where neither socket is active
+    if (oldSocket && oldSocket !== signalingSocket) {
+      console.log(`🔄 Graceful transition: closing old socket for ${oldPeerId}`);
+      try {
+        oldSocket.close();
+      } catch (e) {
+        // Ignore close errors
+      }
+    }
 
     return {
       peerId,
@@ -279,6 +458,12 @@ const WebRTCSync = (() => {
       case 'OFFER':
         console.log('📱 [WebRTC] Received OFFER from Android:', src);
         remotePeerId = src;
+        // CRITICAL: Stop QR auto-refresh immediately when we receive an offer
+        // This prevents the race condition where QR refreshes during connection
+        if (typeof QRGenerator !== 'undefined' && QRGenerator.setConnected) {
+          console.log('🛑 Pausing QR auto-refresh - connection attempt in progress');
+          QRGenerator.setConnected(true);
+        }
         await handleOffer(payload);
         break;
 
@@ -296,6 +481,15 @@ const WebRTCSync = (() => {
       case 'EXPIRE':
         console.log('👋 [Signaling] Remote peer disconnected');
         updateState('disconnected');
+        // Resume QR auto-refresh if connection failed/expired
+        // Only do this if we're still on the sync page
+        if (typeof QRGenerator !== 'undefined' && QRGenerator.setConnected) {
+          const currentHash = window.location.hash.slice(1);
+          if (currentHash === 'sync' || currentHash === '') {
+            console.log('🔄 Resuming QR auto-refresh after disconnect');
+            QRGenerator.setConnected(false);
+          }
+        }
         break;
 
       default:
@@ -495,6 +689,11 @@ const WebRTCSync = (() => {
       updateState('connected');
       emit('connection-established');
 
+      // Stop QR code auto-refresh now that we're connected
+      if (typeof QRGenerator !== 'undefined' && QRGenerator.setConnected) {
+        QRGenerator.setConnected(true);
+      }
+
       // Clear expiration timeout
       if (connectionTimeout) {
         clearTimeout(connectionTimeout);
@@ -513,6 +712,16 @@ const WebRTCSync = (() => {
       try {
         const message = JSON.parse(event.data);
         console.log('📦 [DataChannel] Parsed message:', message);
+
+        // Call all registered data handlers (for bidirectional sync)
+        dataHandlers.forEach(handler => {
+          try {
+            handler(event.data); // Pass raw string data
+          } catch (handlerErr) {
+            console.error('❌ [DataChannel] Handler error:', handlerErr);
+          }
+        });
+
         handleIncomingData(message);
         emit('message', message);
         if (message.type) {
@@ -551,6 +760,11 @@ const WebRTCSync = (() => {
 
     switch (message.type) {
       case 'metadata':
+        // Check if bidirectional sync is already handling this
+        if (typeof BidirectionalSync !== 'undefined' && BidirectionalSync.isInProgress) {
+          console.log('📋 Metadata received but BidirectionalSync is handling it - skipping');
+          break;
+        }
         console.log('📋 Received metadata from Android, initiating bidirectional sync...');
         // Handle both formats: message.payload (older) or direct fields (newer)
         const androidMetadata = message.payload || message;
@@ -626,17 +840,60 @@ const WebRTCSync = (() => {
    */
   const handleMetadataExchange = async (androidMetadata) => {
     let syncInProgress = true;
-    console.log('📋 Android metadata received:', androidMetadata);
+    const syncStartTime = Date.now();
+
+    // Use persistent logger
+    SyncDiagnostics.logSync('handleMetadataExchange START', {
+      timestamp: new Date().toISOString(),
+      androidMetadata: androidMetadata
+    });
 
     // Set flag for main message handler to know bidirectional sync is in progress
     if (typeof window !== 'undefined') {
       window._bidirectionalSyncInProgress = true;
+      window._syncStartTime = syncStartTime;
+
+      // Add beforeunload handler to detect page unload during sync
+      const beforeUnloadHandler = (event) => {
+        const elapsed = Date.now() - syncStartTime;
+        SyncDiagnostics.logError('PAGE UNLOADING during sync!', {
+          elapsed,
+          syncInProgress,
+          indexedDBState: 'unknown - page unloading'
+        });
+      };
+      window.addEventListener('beforeunload', beforeUnloadHandler);
+      window._syncBeforeUnloadHandler = beforeUnloadHandler;
+
+      // Also track visibility changes (tab switching)
+      const visibilityHandler = () => {
+        const elapsed = Date.now() - syncStartTime;
+        SyncDiagnostics.logNav('Visibility changed', {
+          state: document.visibilityState,
+          elapsed
+        });
+      };
+      document.addEventListener('visibilitychange', visibilityHandler);
+      window._syncVisibilityHandler = visibilityHandler;
+
+      // Track hash changes (navigation)
+      const hashChangeHandler = () => {
+        const elapsed = Date.now() - syncStartTime;
+        SyncDiagnostics.logNav('Hash changed during sync', {
+          newHash: window.location.hash,
+          elapsed,
+          syncInProgress
+        });
+      };
+      window.addEventListener('hashchange', hashChangeHandler);
+      window._syncHashChangeHandler = hashChangeHandler;
     }
 
     try {
+      SyncDiagnostics.logSync('Getting web metadata');
       // Get web app metadata
       const webMetadata = await getWebMetadata();
-      console.log('📋 Web metadata prepared:', webMetadata);
+      SyncDiagnostics.logSync('Web metadata prepared', webMetadata);
 
       // Send web metadata back to Android
       await sendMessage({
@@ -650,30 +907,31 @@ const WebRTCSync = (() => {
         platform: webMetadata.platform,
         timestamp: webMetadata.timestamp
       });
-      console.log('📤 Sent web metadata to Android');
+      SyncDiagnostics.logSync('Sent web metadata to Android');
 
       // Get web app changes and send them
       const ourChanges = await incrementalSyncManager.getChangesSinceLastSync();
-      console.log('📦 Web changes ready:', ourChanges ? 'Changes found' : 'No changes');
+      SyncDiagnostics.logSync('Got web changes', { hasChanges: ourChanges && hasChanges(ourChanges) });
 
       if (ourChanges && hasChanges(ourChanges)) {
         await sendMessage({
           type: 'changes',
           data: ourChanges
         });
-        console.log(`📤 Sent ${countChanges(ourChanges)} changes to Android`);
+        SyncDiagnostics.logSync('Sent web changes to Android', { count: countChanges(ourChanges) });
       } else {
         // Still send empty changes to indicate completion
         await sendMessage({
           type: 'changes',
           data: {}
         });
-        console.log('📤 Sent empty changes (up to date)');
+        SyncDiagnostics.logSync('Sent empty changes (up to date)');
       }
 
       // Set up listener for Android's changes response (could be 'changes' or 'syncData' type)
       const androidChangesListener = async (message) => {
         if (!syncInProgress) return;
+        SyncDiagnostics.logSync('Received Android response', { type: message.type });
 
         console.log('📥 Received Android response message:', {
           type: message.type,
@@ -819,10 +1077,10 @@ const WebRTCSync = (() => {
               categories: await Storage.db.categories.count(),
               savingsGoals: await Storage.db.savingsGoals.count()
             };
-            console.log('📊 IndexedDB BEFORE apply:', countsBefore);
+            SyncDiagnostics.logDB('IndexedDB BEFORE apply', countsBefore);
 
             applyResult = await incrementalSyncManager.applyIncomingChanges(actualData);
-            console.log(`✅ Applied ${applyResult.applied} changes from Android (${applyResult.conflicts} conflicts)`);
+            SyncDiagnostics.logSync('Applied incoming changes', { applied: applyResult.applied, conflicts: applyResult.conflicts });
 
             // Log IndexedDB state AFTER applying changes
             const countsAfter = {
@@ -830,12 +1088,12 @@ const WebRTCSync = (() => {
               categories: await Storage.db.categories.count(),
               savingsGoals: await Storage.db.savingsGoals.count()
             };
-            console.log('📊 IndexedDB AFTER apply:', countsAfter);
-            console.log('📊 Difference:', {
+            const diff = {
               transactions: countsAfter.transactions - countsBefore.transactions,
               categories: countsAfter.categories - countsBefore.categories,
               savingsGoals: countsAfter.savingsGoals - countsBefore.savingsGoals
-            });
+            };
+            SyncDiagnostics.logDB('IndexedDB AFTER apply', { countsAfter, diff });
           } else {
             console.error('❌ Unknown data structure from Android:', actualData);
             throw new Error('Unrecognized data format from Android');
@@ -843,29 +1101,38 @@ const WebRTCSync = (() => {
 
           // Verify data was actually saved to IndexedDB
           // Add a delay to ensure IndexedDB transactions are fully committed
-          console.log('🔍 Verifying data was saved to IndexedDB (applied: ' + applyResult.applied + ' changes)...');
-          console.log('⏳ Waiting 200ms for IndexedDB transaction commit...');
-          await new Promise(resolve => setTimeout(resolve, 200));
+          SyncDiagnostics.logDB('Starting verification wait (500ms)', { appliedChanges: applyResult.applied });
+          await new Promise(resolve => setTimeout(resolve, 500));
+          SyncDiagnostics.logDB('Verification wait complete, checking data');
           const verificationResult = await verifyDataSaved();
+          SyncDiagnostics.logDB('Verification result', verificationResult);
 
           if (!verificationResult.success) {
-            console.error('❌ Data verification failed:', verificationResult.error);
-            console.error('   Applied changes:', applyResult.applied);
-            console.error('   Received from Android:', {
-              transactions: actualData.transactions?.length || 0,
-              categories: actualData.categories?.length || 0,
-              savingsGoals: actualData.savingsGoals?.length || 0
+            SyncDiagnostics.logError('Data verification FAILED', {
+              error: verificationResult.error,
+              appliedChanges: applyResult.applied,
+              receivedFromAndroid: {
+                transactions: actualData.transactions?.length || 0,
+                categories: actualData.categories?.length || 0,
+                savingsGoals: actualData.savingsGoals?.length || 0
+              }
             });
-            console.error('   This suggests data was marked as applied but not actually saved to IndexedDB');
-            console.error('   Possible causes: IndexedDB permission issue, quota exceeded, or storage.js bug');
             throw new Error(`Data verification failed: ${verificationResult.error}`);
           }
 
-          console.log('✅ Data verification successful:', {
-            transactionCount: verificationResult.counts.transactions,
-            categoryCount: verificationResult.counts.categories,
-            savingsGoalCount: verificationResult.counts.savingsGoals
-          });
+          SyncDiagnostics.logDB('Verification SUCCESSFUL', verificationResult.counts);
+
+          // Save pairing information AFTER data is verified (important for isPaired check)
+          if (androidMetadata && (androidMetadata.deviceId || androidMetadata.device_id)) {
+            const deviceId = androidMetadata.deviceId || androidMetadata.device_id;
+            const deviceName = androidMetadata.deviceName || androidMetadata.device_name || 'Android Device';
+            PairingManager.savePairing(deviceId, deviceName);
+            SyncDiagnostics.logState('Saved pairing info', { deviceId, deviceName });
+          }
+
+          // Update lastSync AFTER data is verified (moved from applyIncomingChanges)
+          PairingManager.updateLastSync();
+          SyncDiagnostics.logState('Updated lastSync timestamp', { lastSync: PairingManager.getLastSyncTime() });
 
           // Send sync completion message
           await sendMessage({
@@ -873,7 +1140,17 @@ const WebRTCSync = (() => {
             applied: applyResult.applied,
             conflicts: applyResult.conflicts
           });
-          console.log('📤 Sent sync completion to Android');
+          SyncDiagnostics.logSync('Sent syncComplete to Android');
+
+          // Final verification - check data one more time before emitting events
+          const finalCheck = {
+            transactions: await Storage.db.transactions.count(),
+            categories: await Storage.db.categories.count(),
+            savingsGoals: await Storage.db.savingsGoals.count(),
+            lastSync: PairingManager.getLastSyncTime(),
+            isPaired: PairingManager.isPaired()
+          };
+          SyncDiagnostics.logState('FINAL STATE CHECK before emit', finalCheck);
 
           // Emit event to update UI
           emit('sync-completed', {
@@ -882,8 +1159,30 @@ const WebRTCSync = (() => {
             verified: true,
             counts: verificationResult.counts
           });
+          SyncDiagnostics.logSync('Emitted sync-completed event');
 
           syncInProgress = false;
+
+          // Clean up event listeners
+          if (window._syncBeforeUnloadHandler) {
+            window.removeEventListener('beforeunload', window._syncBeforeUnloadHandler);
+            delete window._syncBeforeUnloadHandler;
+          }
+          if (window._syncVisibilityHandler) {
+            document.removeEventListener('visibilitychange', window._syncVisibilityHandler);
+            delete window._syncVisibilityHandler;
+          }
+          if (window._syncHashChangeHandler) {
+            window.removeEventListener('hashchange', window._syncHashChangeHandler);
+            delete window._syncHashChangeHandler;
+          }
+
+          // Log complete sync diagnostics
+          const totalTime = Date.now() - syncStartTime;
+          SyncDiagnostics.logSync('SYNC COMPLETED SUCCESSFULLY', {
+            totalTimeMs: totalTime,
+            finalCounts: finalCheck
+          });
 
           // Clear bidirectional sync flag
           if (typeof window !== 'undefined') {
@@ -900,6 +1199,7 @@ const WebRTCSync = (() => {
             name: error.name,
             phase: 'applying-changes'
           };
+          SyncDiagnostics.logError('Failed to apply Android changes', errorDetails);
 
           // Try to send error to Android
           try {
@@ -1204,10 +1504,24 @@ const WebRTCSync = (() => {
   };
 
   /**
-   * Set callback for received data
+   * Set callback for received data (legacy single callback)
    */
   const onData = (callback) => {
-    onDataCallback = callback;
+    if (typeof callback === 'function' && !dataHandlers.includes(callback)) {
+      dataHandlers.push(callback);
+    }
+  };
+
+  /**
+   * Remove a data handler
+   * @param {Function} callback - Handler to remove
+   */
+  const offData = (callback) => {
+    const index = dataHandlers.indexOf(callback);
+    if (index > -1) {
+      dataHandlers.splice(index, 1);
+      console.log('🗑️ [DataChannel] Removed data handler');
+    }
   };
 
   /**
@@ -1272,12 +1586,14 @@ const WebRTCSync = (() => {
     preConnect,
     disconnect,
     onData,
+    offData,
     onStateChange,
     send,
     waitForMessage,
     on,
     once,
     off,
+    emit,  // Expose emit for external event triggering (e.g., from BidirectionalSync)
     isConnected,
     getConnectedServer,
     getPeerId: () => myPeerId

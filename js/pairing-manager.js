@@ -171,10 +171,29 @@ const PairingManager = (() => {
     updateSyncSettings({ conflictResolution: strategy });
   }
 
+  /**
+   * Get paired device name
+   * @returns {string|null}
+   */
+  function getDeviceName() {
+    const info = getPairingInfo();
+    return info?.deviceName || null;
+  }
+
+  /**
+   * Alias for getPairingInfo for compatibility
+   * @returns {Object|null}
+   */
+  function getPairedDevice() {
+    return getPairingInfo();
+  }
+
   // Public API
   return {
     isPaired,
     getPairedDeviceId,
+    getDeviceName,
+    getPairedDevice,
     savePairing,
     getPairingInfo,
     clearPairing,

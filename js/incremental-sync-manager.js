@@ -122,7 +122,8 @@ class IncrementalSyncManager {
       conflictDetails.push(...result.conflictDetails);
     });
 
-    PairingManager.updateLastSync();
+    // Note: PairingManager.updateLastSync() is now called by the caller (handleMetadataExchange)
+    // AFTER data verification, to ensure lastSync is only updated when data is confirmed saved
     console.log(`✅ Applied ${applied} changes (${conflicts} conflicts)`);
 
     return { applied, conflicts, conflictDetails };
@@ -130,21 +131,37 @@ class IncrementalSyncManager {
 
   async applyStoreChanges(storeName, records = [], strategy) {
     if (!records || records.length === 0) {
+      console.log(`📝 [ISM] applyStoreChanges: ${storeName} - no records to apply`);
       return { applied: 0, conflicts: 0, conflictDetails: [] };
     }
+
+    const startTime = Date.now();
+    console.log(`📝 [ISM] applyStoreChanges START: ${storeName} with ${records.length} records`);
 
     let applied = 0;
     let conflicts = 0;
     const conflictDetails = [];
 
-    for (const record of records) {
-      const result = await this.applyRecordChange(storeName, record, strategy);
-      if (result.applied) applied++;
-      if (result.conflict) {
-        conflicts++;
-        if (result.conflictDetail) conflictDetails.push(result.conflictDetail);
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      try {
+        const result = await this.applyRecordChange(storeName, record, strategy);
+        if (result.applied) applied++;
+        if (result.conflict) {
+          conflicts++;
+          if (result.conflictDetail) conflictDetails.push(result.conflictDetail);
+        }
+        // Log every 10th record for progress tracking
+        if ((i + 1) % 10 === 0 || i === records.length - 1) {
+          console.log(`📝 [ISM] ${storeName}: processed ${i + 1}/${records.length} (applied: ${applied})`);
+        }
+      } catch (error) {
+        console.error(`❌ [ISM] Error applying record ${i} in ${storeName}:`, error);
       }
     }
+
+    const elapsed = Date.now() - startTime;
+    console.log(`📝 [ISM] applyStoreChanges COMPLETE: ${storeName} - applied: ${applied}, conflicts: ${conflicts} (${elapsed}ms)`);
 
     return { applied, conflicts, conflictDetails };
   }
@@ -154,16 +171,19 @@ class IncrementalSyncManager {
     const keyField = this.storeKeyMap[storeName] || 'id';
     const incomingRecord = this.normalizeIncomingRecord(incoming, keyField, storeName);
 
-    // Verify incoming hash if DataHashService is available
-    if (typeof DataHashService !== 'undefined' && incomingRecord.data_hash) {
-      try {
-        const hashValid = await DataHashService.verifyRecordHash(storeName, incomingRecord);
-        if (!hashValid) {
-          console.warn(`⚠️ Hash verification failed for ${storeName} record ${incomingRecord[keyField]} - data may be corrupted but will still be applied`);
-        }
-      } catch (error) {
-        console.error(`❌ Error verifying hash for ${storeName}:`, error);
-      }
+    // NOTE: Hash verification is DISABLED for cross-platform sync because Android and Web
+    // use different hash algorithms. The hash is still useful for detecting corruption
+    // in local storage, but cross-platform verification requires identical algorithms.
+    //
+    // TODO: Align hash algorithms between Android (Dart) and Web (JavaScript) to enable
+    // cross-platform hash verification.
+    //
+    // For now, we trust data coming from Android and will recompute the hash on the web side
+    // after storing.
+    if (incomingRecord.data_hash) {
+      // Clear the Android hash - we'll compute our own after storing
+      console.log(`ℹ️ Accepting ${storeName} record ${incomingRecord[keyField]} (hash verification disabled for cross-platform sync)`);
+      delete incomingRecord.data_hash;
     }
 
     if (!incomingRecord[keyField]) {
@@ -248,13 +268,19 @@ class IncrementalSyncManager {
       normalizedRecord.id = normalizedRecord.ID;
     }
 
+    // Normalize underscore field names to camelCase (Android sends created_at, web expects createdAt)
+    // This ensures proper conflict detection and data handling
+    const createdAtValue = normalizedRecord.createdAt || normalizedRecord.created_at;
+    const updatedAtValue = normalizedRecord.updatedAt || normalizedRecord.updated_at;
+    const deviceIdValue = normalizedRecord.deviceId || normalizedRecord.device_id;
+
     return {
       ...normalizedRecord,
       [keyField]: normalizedRecord[keyField] || record[keyField.toUpperCase()],
-      createdAt: this.normalizeTimestamp(normalizedRecord.createdAt) || now,
-      updatedAt: this.normalizeTimestamp(normalizedRecord.updatedAt) || now,
+      createdAt: this.normalizeTimestamp(createdAtValue) || now,
+      updatedAt: this.normalizeTimestamp(updatedAtValue) || now,
       deleted: normalizedRecord.deleted === undefined ? false : Boolean(normalizedRecord.deleted),
-      deviceId: normalizedRecord.deviceId || 'android'
+      deviceId: deviceIdValue || 'android'
     };
   }
 

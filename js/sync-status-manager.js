@@ -133,6 +133,19 @@ class SyncStatusManager {
     if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
     return `${Math.floor(seconds / 86400)}d ago`;
   }
+
+  /**
+   * Update pending changes count
+   * @param {number} count - Number of pending changes
+   */
+  updatePendingCount(count) {
+    const statusText = this.statusElement?.querySelector('.status-text');
+    if (statusText && count > 0) {
+      statusText.textContent = `${count} pending`;
+    } else if (statusText && count === 0) {
+      this.updateLastSyncTime();
+    }
+  }
 }
 
 // Global instance

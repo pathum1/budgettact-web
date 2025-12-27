@@ -19,6 +19,11 @@
       syncStatus.init();
     }
 
+    // Initialize cross-tab sync detection
+    if (typeof CrossTabSync !== 'undefined') {
+      CrossTabSync.init();
+    }
+
     // Register service worker
     registerServiceWorker();
 
@@ -97,6 +102,12 @@
 
     // Update sync status
     UI.updateSyncStatus();
+
+    // Listen for data updates and refresh current view
+    window.addEventListener('data-updated', async () => {
+      console.log('Data updated, refreshing view:', currentView);
+      await renderCurrentView();
+    });
 
     console.log('BudgetTact Web initialized');
   }
@@ -218,6 +229,13 @@
    */
   async function renderCurrentView() {
     console.log('Rendering view:', currentView);
+
+    // Remove any existing FAB button
+    const existingFab = document.querySelector('.fab');
+    if (existingFab) {
+      existingFab.remove();
+    }
+
     switch (currentView) {
       case 'sync':
         console.log('Initializing WebRTC sync...');
@@ -230,17 +248,54 @@
         break;
       case 'dashboard':
         await UI.renderDashboard();
+        addFabButton('transaction');
         break;
       case 'transactions':
         await UI.renderTransactions();
+        addFabButton('transaction');
         break;
       case 'categories':
         await UI.renderCategories();
+        addFabButton('category');
         break;
       case 'goals':
         await UI.renderGoals();
+        addFabButton('goal');
         break;
     }
+  }
+
+  /**
+   * Add Floating Action Button to current view
+   * @param {string} type - Type of FAB: 'transaction', 'category', 'goal'
+   */
+  function addFabButton(type) {
+    const fab = document.createElement('button');
+    fab.className = 'fab';
+    fab.innerHTML = '+';
+    fab.setAttribute('aria-label', `Add ${type}`);
+
+    fab.onclick = () => {
+      switch (type) {
+        case 'transaction':
+          if (typeof CrudUI !== 'undefined') {
+            CrudUI.showAddTransactionModal();
+          }
+          break;
+        case 'category':
+          if (typeof CrudUI !== 'undefined') {
+            CrudUI.showAddCategoryModal();
+          }
+          break;
+        case 'goal':
+          if (typeof CrudUI !== 'undefined') {
+            CrudUI.showAddGoalModal();
+          }
+          break;
+      }
+    };
+
+    document.body.appendChild(fab);
   }
 
   /**

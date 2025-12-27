@@ -407,14 +407,40 @@ const Sync = (() => {
       }
 
       // Set up data callback - triggered when Android sends sync data
+      // NOTE: This is a legacy handler for direct sync data. When BidirectionalSync is running,
+      // it handles all messaging, so we skip processing here to avoid conflicts.
       WebRTCSync.onData(async (syncData) => {
+        // Skip if BidirectionalSync is handling the sync flow
+        if (typeof BidirectionalSync !== 'undefined' && BidirectionalSync.isInProgress) {
+          console.log('📋 [sync.js] Skipping onData - BidirectionalSync is handling messages');
+          return;
+        }
+
         if (showStatusCallback) {
           showStatusCallback('Receiving data...');
         }
 
         try {
+          // Parse if string (data handlers receive raw strings)
+          let parsedData = syncData;
+          if (typeof syncData === 'string') {
+            try {
+              parsedData = JSON.parse(syncData);
+            } catch (e) {
+              console.error('Failed to parse sync data:', e);
+              return; // Not valid JSON, ignore
+            }
+          }
+
+          // Skip metadata messages - those are handled by BidirectionalSync
+          if (parsedData.type === 'metadata' || parsedData.type === 'changes' ||
+              parsedData.type === 'syncComplete' || parsedData.type === 'error') {
+            console.log('📋 [sync.js] Skipping message type:', parsedData.type);
+            return;
+          }
+
           // Import data using existing function
-          const result = await importSyncPayload(syncData);
+          const result = await importSyncPayload(parsedData);
 
           if (result.success) {
             if (showStatusCallback) {
@@ -423,8 +449,8 @@ const Sync = (() => {
 
             // Save pairing information
             PairingManager.savePairing(
-              syncData.deviceId,
-              syncData.deviceName || 'Android Device'
+              parsedData.deviceId,
+              parsedData.deviceName || 'Android Device'
             );
             console.log('✅ Device paired successfully');
 
@@ -498,6 +524,116 @@ const Sync = (() => {
         }
       });
 
+      // Listen for connection established - trigger bidirectional sync
+      WebRTCSync.on('connection-established', async () => {
+        // Use persistent logger
+        if (typeof SyncDiagnostics !== 'undefined') {
+          SyncDiagnostics.logSync('WebRTC connection-established event');
+        }
+
+        if (showStatusCallback) {
+          showStatusCallback('Connected! Starting sync...');
+        }
+
+        try {
+          // Trigger bidirectional sync orchestration
+          // NOTE: This may return { success: false } if handleMetadataExchange is already handling.
+          // That's OK - handleMetadataExchange will emit sync-completed when done.
+          const result = await BidirectionalSync.performSync();
+          console.log('📋 [SYNC-CONN] BidirectionalSync.performSync result:', result);
+
+          if (result.success) {
+            console.log('✅ Bidirectional sync completed successfully:', result.stats);
+
+            if (showStatusCallback) {
+              showStatusCallback('✅ Sync complete!');
+            }
+
+            // Show success notification
+            Utils.showNotification(
+              `Sync complete: ${result.stats.webChangesSent} sent, ${result.stats.androidChangesReceived} received`,
+              'success',
+              4000
+            );
+
+            // Verify data was actually saved before navigating
+            console.log('📋 [SYNC-CONN] Verifying data was saved to IndexedDB...');
+            const hasDataAfterSync = await Storage.hasData();
+            const txCount = await Storage.db.transactions.count();
+            const catCount = await Storage.db.categories.count();
+            console.log('📋 [SYNC-CONN] Post-sync IndexedDB check:', {
+              hasData: hasDataAfterSync,
+              transactions: txCount,
+              categories: catCount
+            });
+
+            if (!hasDataAfterSync && result.stats.androidChangesReceived > 0) {
+              console.error('❌ CRITICAL: Data was not saved to IndexedDB despite sync completing!');
+              console.error('   Expected', result.stats.androidChangesReceived, 'changes but hasData is false');
+              Utils.showNotification(
+                'Sync completed but data was not saved. Please check browser storage settings (not in incognito?)',
+                'error',
+                10000
+              );
+              return;
+            }
+
+            // Wait for IndexedDB to fully commit
+            console.log('📋 [SYNC-CONN] Waiting 1500ms for IndexedDB commit...');
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            // Final check before navigation
+            const finalCheck = {
+              transactions: await Storage.db.transactions.count(),
+              categories: await Storage.db.categories.count()
+            };
+            console.log('📋 [SYNC-CONN] Final IndexedDB check before navigation:', finalCheck);
+
+            // Navigate to dashboard WITHOUT reload
+            console.log('📋 [SYNC-CONN] Navigating to dashboard (no reload)');
+            window.location.hash = 'dashboard';
+            window.dispatchEvent(new CustomEvent('data-updated'));
+
+            // DO NOT reload - this was causing data loss!
+            // The sync-completed event handler or app.js router will handle display
+          } else {
+            // This often means handleMetadataExchange is handling the sync instead
+            // That's OK - it will emit sync-completed when done
+            console.log('📋 [SYNC-CONN] BidirectionalSync deferred (likely handled by handleMetadataExchange)');
+            console.log('📋 [SYNC-CONN] Message:', result.message);
+
+            // Only show error if it's a real error, not just "already in progress"
+            if (!result.message?.includes('already in progress')) {
+              if (showErrorCallback) {
+                showErrorCallback(`Sync issue: ${result.message}`);
+              }
+              Utils.showNotification(
+                `Sync issue: ${result.message}`,
+                'warning',
+                5000
+              );
+            } else {
+              // handleMetadataExchange is handling - just update status
+              if (showStatusCallback) {
+                showStatusCallback('Syncing data...');
+              }
+            }
+          }
+        } catch (error) {
+          console.error('❌ Exception during bidirectional sync:', error);
+
+          if (showErrorCallback) {
+            showErrorCallback(`Sync error: ${error.message}`);
+          }
+
+          Utils.showNotification(
+            `Sync error: ${error.message}`,
+            'error',
+            5000
+          );
+        }
+      });
+
       // Listen for sync errors
       WebRTCSync.on('sync-error', (errorInfo) => {
         console.error('❌ Sync error received:', errorInfo);
@@ -521,8 +657,11 @@ const Sync = (() => {
       });
 
       // Listen for incremental sync completion events
-      WebRTCSync.on('sync-completed', (result) => {
-        console.log('✅ Sync completed event received:', result);
+      WebRTCSync.on('sync-completed', async (result) => {
+        // Use persistent logger
+        if (typeof SyncDiagnostics !== 'undefined') {
+          SyncDiagnostics.logNav('sync-completed event received', result);
+        }
 
         // Verify that data verification passed
         if (result.verified === false) {
@@ -534,6 +673,29 @@ const Sync = (() => {
             'Sync completed but data verification failed. Please try again.',
             'error',
             5000
+          );
+          return;
+        }
+
+        // Double-check IndexedDB state before navigating
+        console.log('📋 [SYNC-NAV] Verifying IndexedDB before navigation...');
+        const verifyBeforeNav = {
+          transactions: await Storage.db.transactions.count(),
+          categories: await Storage.db.categories.count(),
+          savingsGoals: await Storage.db.savingsGoals.count(),
+          lastSync: PairingManager.getLastSyncTime(),
+          isPaired: PairingManager.isPaired()
+        };
+        console.log('📋 [SYNC-NAV] IndexedDB state:', verifyBeforeNav);
+
+        // If we received changes but have no data, something went wrong
+        if (result.received > 0 && verifyBeforeNav.transactions === 0 && verifyBeforeNav.categories === 0) {
+          console.error('❌ [SYNC-NAV] CRITICAL: Received changes but IndexedDB is empty!');
+          console.error('   This means data was not persisted. Aborting navigation.');
+          Utils.showNotification(
+            'Sync error: Data was not saved. Please check browser storage settings.',
+            'error',
+            10000
           );
           return;
         }
@@ -556,26 +718,34 @@ const Sync = (() => {
           3000
         );
 
-        // Refresh UI after a short delay
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('data-updated'));
+        // Wait for IndexedDB to fully commit before navigating
+        console.log('📋 [SYNC-NAV] Waiting 1000ms for IndexedDB commit...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-          // Navigate to dashboard after successful sync
-          window.location.hash = 'dashboard';
-          console.log('📱 Navigating to dashboard after sync completion');
-        }, 500);
+        // Final verification
+        const finalCheck = {
+          transactions: await Storage.db.transactions.count(),
+          categories: await Storage.db.categories.count()
+        };
+        console.log('📋 [SYNC-NAV] Final IndexedDB check:', finalCheck);
 
-        // Fallback navigation in case sync completion doesn't trigger properly
-        setTimeout(() => {
-          const currentHash = window.location.hash.slice(1);
-          if (currentHash === 'sync') {
-            console.log('⚠️ Fallback: Still on sync page, forcing navigation to dashboard');
-            window.location.hash = 'dashboard';
+        // Refresh UI
+        window.dispatchEvent(new CustomEvent('data-updated'));
 
-            // Show notification to user
-            Utils.showNotification('Sync completed! Redirecting to dashboard...', 'success', 3000);
-          }
-        }, 15000); // 15 second fallback
+        // Navigate to dashboard WITHOUT reload - let app.js handle display
+        if (typeof SyncDiagnostics !== 'undefined') {
+          SyncDiagnostics.logNav('About to navigate to dashboard', {
+            fromHash: window.location.hash,
+            finalCheck
+          });
+        }
+        window.location.hash = 'dashboard';
+
+        // DO NOT reload - this was causing data loss!
+        // The app.js router will handle displaying the dashboard
+        if (typeof SyncDiagnostics !== 'undefined') {
+          SyncDiagnostics.logNav('Navigation complete', { newHash: window.location.hash });
+        }
       });
 
       // Initialize WebRTC with the peer ID

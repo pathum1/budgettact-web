@@ -239,9 +239,21 @@ const Storage = (() => {
   };
 
   async function upsertRecord(storeName, record, { operation = null, queue = true } = {}) {
+    const startTime = Date.now();
     const keyField = storePrimaryKeys[storeName] || 'id';
+    const recordId = record[keyField];
+
+    // Use persistent diagnostics if available
+    const logDB = (msg, data) => {
+      if (typeof SyncDiagnostics !== 'undefined') {
+        SyncDiagnostics.logDB(msg, data);
+      } else {
+        console.log(`📝 [STORAGE] ${msg}`, data || '');
+      }
+    };
+
     const table = db.table(storeName);
-    const existing = record[keyField] ? await table.get(record[keyField]) : null;
+    const existing = recordId ? await table.get(recordId) : null;
     const base = existing ? { ...existing, ...record } : record;
     const withMeta = ensureSyncMetadata(base, { isDelete: base.deleted });
 
@@ -258,7 +270,19 @@ const Storage = (() => {
       }
     }
 
-    await table.put(withMeta);
+    try {
+      await table.put(withMeta);
+      const elapsed = Date.now() - startTime;
+
+      // Only log every 10th record to avoid log spam during bulk operations
+      if (Math.random() < 0.1) {
+        logDB(`upsertRecord: ${storeName}`, { id: recordId, elapsed });
+      }
+    } catch (putError) {
+      logDB(`upsertRecord FAILED: ${storeName}`, { id: recordId, error: putError.message });
+      throw putError;
+    }
+
     const inferredOperation = operation || (existing ? 'update' : 'insert');
     if (queue && typeof autoSyncCRUD !== 'undefined') {
       autoSyncCRUD.queueChange(storeName, inferredOperation, withMeta);
@@ -797,6 +821,558 @@ const Storage = (() => {
     }
   }
 
+  // ============================================
+  // CRUD OPERATIONS
+  // ============================================
+
+  /**
+   * Generate a unique ID for web-originated records
+   * Format: web-{timestamp}-{random}
+   */
+  function generateWebId() {
+    const timestamp = Date.now();
+    const random = crypto.randomUUID ?
+      crypto.randomUUID().slice(0, 8) :
+      Math.random().toString(36).substring(2, 10);
+    return `web-${timestamp}-${random}`;
+  }
+
+  /**
+   * Generate sync metadata for new/updated records
+   */
+  function generateSyncMetadata(isNew = false) {
+    const now = Date.now();
+    return {
+      createdAt: isNew ? now : undefined,  // Only set on create
+      updatedAt: now,
+      deviceId: 'web',
+      deleted: false
+    };
+  }
+
+  /**
+   * Get active categories (not deleted)
+   */
+  async function getActiveCategories() {
+    try {
+      return await db.categories.filter(c => !c.deleted).toArray();
+    } catch (error) {
+      console.error('Failed to get active categories:', error);
+      return [];
+    }
+  }
+
+  // ============================================
+  // TRANSACTION CRUD
+  // ============================================
+
+  /**
+   * Create a new transaction
+   * @param {Object} data - Transaction data (without ID or sync metadata)
+   * @returns {Promise<Object>} Created transaction with all fields
+   */
+  async function createTransaction(data) {
+    // Validate required fields
+    if (!data.transactionAmount || data.transactionAmount <= 0) {
+      throw new Error('Transaction amount must be greater than 0');
+    }
+    if (!data.transactionCategory) {
+      throw new Error('Transaction category is required');
+    }
+    if (!data.transactionType || !['expense', 'income'].includes(data.transactionType)) {
+      throw new Error('Transaction type must be "expense" or "income"');
+    }
+    if (!data.transactionDate) {
+      throw new Error('Transaction date is required');
+    }
+
+    const transaction = {
+      transactionID: generateWebId(),
+      merchantName: data.merchantName || '',
+      transactionDate: data.transactionDate,
+      transactionType: data.transactionType,
+      transactionAmount: parseFloat(data.transactionAmount),
+      transactionCategory: parseInt(data.transactionCategory),
+      currency: data.currency || (await getMetadata('currency')) || 'USD',
+      billerName: data.billerName || null,
+      ...generateSyncMetadata(true),
+      data_hash: null
+    };
+
+    // Compute hash
+    if (typeof DataHashService !== 'undefined') {
+      transaction.data_hash = await DataHashService.computeTransactionHash(transaction);
+    }
+
+    await db.transactions.put(transaction);
+
+    // Queue for sync
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('transactions', 'insert', transaction);
+    }
+
+    // Dispatch event for UI update
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'transaction-created' } }));
+
+    console.log('✅ Created transaction:', transaction.transactionID);
+    return transaction;
+  }
+
+  /**
+   * Update an existing transaction
+   * @param {string} transactionID - ID of transaction to update
+   * @param {Object} updates - Fields to update
+   * @returns {Promise<Object>} Updated transaction
+   */
+  async function updateTransaction(transactionID, updates) {
+    const existing = await db.transactions.get(transactionID);
+    if (!existing) {
+      throw new Error(`Transaction not found: ${transactionID}`);
+    }
+
+    // Validate updates if provided
+    if (updates.transactionAmount !== undefined && updates.transactionAmount <= 0) {
+      throw new Error('Transaction amount must be greater than 0');
+    }
+    if (updates.transactionType && !['expense', 'income'].includes(updates.transactionType)) {
+      throw new Error('Transaction type must be "expense" or "income"');
+    }
+
+    const updated = {
+      ...existing,
+      ...updates,
+      updatedAt: Date.now(),
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    // Recompute hash
+    if (typeof DataHashService !== 'undefined') {
+      updated.data_hash = await DataHashService.computeTransactionHash(updated);
+    }
+
+    await db.transactions.put(updated);
+
+    // Queue for sync
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('transactions', 'update', updated);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'transaction-updated' } }));
+
+    console.log('✅ Updated transaction:', transactionID);
+    return updated;
+  }
+
+  /**
+   * Soft delete a transaction
+   * @param {string} transactionID - ID of transaction to delete
+   * @returns {Promise<void>}
+   */
+  async function deleteTransaction(transactionID) {
+    const existing = await db.transactions.get(transactionID);
+    if (!existing) {
+      console.warn('Transaction not found for deletion:', transactionID);
+      return;
+    }
+
+    const deleted = {
+      ...existing,
+      deleted: true,
+      updatedAt: Date.now(),
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    // Recompute hash
+    if (typeof DataHashService !== 'undefined') {
+      deleted.data_hash = await DataHashService.computeTransactionHash(deleted);
+    }
+
+    await db.transactions.put(deleted);
+
+    // Queue for sync
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('transactions', 'delete', deleted);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'transaction-deleted' } }));
+
+    console.log('🗑️ Soft deleted transaction:', transactionID);
+  }
+
+  // ============================================
+  // CATEGORY CRUD
+  // ============================================
+
+  /**
+   * Create a new category
+   * @param {Object} data - Category data
+   * @returns {Promise<Object>} Created category
+   */
+  async function createCategory(data) {
+    if (!data.categoryType || data.categoryType.trim() === '') {
+      throw new Error('Category name is required');
+    }
+
+    // Get next ID (categories use auto-increment integers)
+    const allCategories = await db.categories.toArray();
+    const maxId = allCategories.reduce((max, c) => Math.max(max, c.id || 0), 0);
+
+    const category = {
+      id: maxId + 1,
+      categoryType: data.categoryType.trim(),
+      budgetAmount: parseFloat(data.budgetAmount) || 0,
+      iconName: data.iconName || 'default',
+      colorCode: data.colorCode || null,
+      autoPropagateToNextMonth: data.autoPropagateToNextMonth !== false,
+      budgetNotificationsEnabled: data.budgetNotificationsEnabled || false,
+      ...generateSyncMetadata(true),
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      category.data_hash = await DataHashService.computeCategoryHash(category);
+    }
+
+    await db.categories.put(category);
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('categories', 'insert', category);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'category-created' } }));
+
+    console.log('✅ Created category:', category.id, category.categoryType);
+    return category;
+  }
+
+  /**
+   * Update a category
+   * @param {number} id - Category ID
+   * @param {Object} updates - Fields to update
+   * @returns {Promise<Object>} Updated category
+   */
+  async function updateCategory(id, updates) {
+    const existing = await db.categories.get(id);
+    if (!existing) {
+      throw new Error(`Category not found: ${id}`);
+    }
+
+    const updated = {
+      ...existing,
+      ...updates,
+      updatedAt: Date.now(),
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      updated.data_hash = await DataHashService.computeCategoryHash(updated);
+    }
+
+    await db.categories.put(updated);
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('categories', 'update', updated);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'category-updated' } }));
+
+    console.log('✅ Updated category:', id);
+    return updated;
+  }
+
+  /**
+   * Delete a category (with validation)
+   * @param {number} id - Category ID
+   * @returns {Promise<void>}
+   */
+  async function deleteCategory(id) {
+    // Check for active transactions using this category
+    const transactionCount = await db.transactions
+      .where('transactionCategory')
+      .equals(id)
+      .filter(t => !t.deleted)
+      .count();
+
+    if (transactionCount > 0) {
+      throw new Error(`Cannot delete category: ${transactionCount} active transaction(s) use this category`);
+    }
+
+    const existing = await db.categories.get(id);
+    if (!existing) {
+      console.warn('Category not found for deletion:', id);
+      return;
+    }
+
+    const deleted = {
+      ...existing,
+      deleted: true,
+      updatedAt: Date.now(),
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      deleted.data_hash = await DataHashService.computeCategoryHash(deleted);
+    }
+
+    await db.categories.put(deleted);
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('categories', 'delete', deleted);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'category-deleted' } }));
+
+    console.log('🗑️ Soft deleted category:', id);
+  }
+
+  // ============================================
+  // SAVINGS GOAL CRUD
+  // ============================================
+
+  /**
+   * Create a new savings goal
+   * @param {Object} data - Goal data
+   * @returns {Promise<Object>} Created goal
+   */
+  async function createSavingsGoal(data) {
+    if (!data.goalName || data.goalName.trim() === '') {
+      throw new Error('Goal name is required');
+    }
+    if (!data.targetAmount || data.targetAmount <= 0) {
+      throw new Error('Target amount must be greater than 0');
+    }
+
+    const allGoals = await db.savingsGoals.toArray();
+    const maxId = allGoals.reduce((max, g) => Math.max(max, g.id || 0), 0);
+
+    const now = new Date().toISOString();
+    const goal = {
+      id: maxId + 1,
+      goalName: data.goalName.trim(),
+      targetAmount: parseFloat(data.targetAmount),
+      currentAmount: parseFloat(data.currentAmount) || 0,
+      description: data.description || '',
+      iconName: data.iconName || 'savings',
+      customColor: data.customColor || null,
+      createdDate: now,
+      targetDate: data.targetDate || null,
+      priority: data.priority || 'medium',
+      isActive: data.isActive !== false ? 1 : 0,
+      category: data.category || 'custom',
+      allocationStrategy: data.allocationStrategy || 'manual',
+      fixedAllocationAmount: parseFloat(data.fixedAllocationAmount) || 0,
+      percentageOfRemaining: parseFloat(data.percentageOfRemaining) || 0,
+      createdAt: now,
+      updatedAt: now,
+      deleted: 0,
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      goal.data_hash = await DataHashService.computeSavingsGoalHash(goal);
+    }
+
+    await db.savingsGoals.put(goal);
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('savingsGoals', 'insert', goal);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'goal-created' } }));
+
+    console.log('✅ Created savings goal:', goal.id, goal.goalName);
+    return goal;
+  }
+
+  /**
+   * Update a savings goal
+   * @param {number} id - Goal ID
+   * @param {Object} updates - Fields to update
+   * @returns {Promise<Object>} Updated goal
+   */
+  async function updateSavingsGoal(id, updates) {
+    const existing = await db.savingsGoals.get(id);
+    if (!existing) {
+      throw new Error(`Savings goal not found: ${id}`);
+    }
+
+    const updated = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      updated.data_hash = await DataHashService.computeSavingsGoalHash(updated);
+    }
+
+    await db.savingsGoals.put(updated);
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('savingsGoals', 'update', updated);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'goal-updated' } }));
+
+    console.log('✅ Updated savings goal:', id);
+    return updated;
+  }
+
+  /**
+   * Delete a savings goal
+   * @param {number} id - Goal ID
+   * @returns {Promise<void>}
+   */
+  async function deleteSavingsGoal(id) {
+    const existing = await db.savingsGoals.get(id);
+    if (!existing) {
+      console.warn('Savings goal not found for deletion:', id);
+      return;
+    }
+
+    const deleted = {
+      ...existing,
+      deleted: 1,
+      isActive: 0,
+      updatedAt: new Date().toISOString(),
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      deleted.data_hash = await DataHashService.computeSavingsGoalHash(deleted);
+    }
+
+    await db.savingsGoals.put(deleted);
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('savingsGoals', 'delete', deleted);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'goal-deleted' } }));
+
+    console.log('🗑️ Soft deleted savings goal:', id);
+  }
+
+  // ============================================
+  // GOAL TRANSACTION CRUD
+  // ============================================
+
+  /**
+   * Add a contribution or withdrawal to a goal
+   * @param {Object} data - Goal transaction data
+   * @returns {Promise<Object>} Created goal transaction
+   */
+  async function createGoalTransaction(data) {
+    if (!data.goalId) {
+      throw new Error('Goal ID is required');
+    }
+    if (!data.amount || data.amount <= 0) {
+      throw new Error('Amount must be greater than 0');
+    }
+    if (!data.transactionType || !['contribution', 'withdrawal'].includes(data.transactionType)) {
+      throw new Error('Transaction type must be "contribution" or "withdrawal"');
+    }
+
+    // Verify goal exists
+    const goal = await db.savingsGoals.get(data.goalId);
+    if (!goal) {
+      throw new Error(`Savings goal not found: ${data.goalId}`);
+    }
+
+    const allGoalTxns = await db.goalTransactions.toArray();
+    const maxId = allGoalTxns.reduce((max, t) => Math.max(max, t.id || 0), 0);
+
+    const now = Date.now();
+    const goalTransaction = {
+      id: maxId + 1,
+      goalId: parseInt(data.goalId),
+      amount: parseFloat(data.amount),
+      transactionType: data.transactionType,
+      transactionDate: data.transactionDate || new Date().toISOString(),
+      description: data.description || '',
+      sourceTransactionId: data.sourceTransactionId || null,
+      sourceTransactionType: data.sourceTransactionType || null,
+      createdAt: now,
+      updated_at: now,
+      deleted: 0,
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      goalTransaction.data_hash = await DataHashService.computeGoalTransactionHash(goalTransaction);
+    }
+
+    // Update goal's currentAmount
+    const amountDelta = data.transactionType === 'contribution' ? data.amount : -data.amount;
+    const newCurrentAmount = Math.max(0, (goal.currentAmount || 0) + amountDelta);
+
+    await db.transaction('rw', [db.goalTransactions, db.savingsGoals], async () => {
+      await db.goalTransactions.put(goalTransaction);
+      await updateSavingsGoal(data.goalId, { currentAmount: newCurrentAmount });
+    });
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('goalTransactions', 'insert', goalTransaction);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'goal-transaction-created' } }));
+
+    console.log('✅ Created goal transaction:', goalTransaction.id);
+    return goalTransaction;
+  }
+
+  /**
+   * Delete a goal transaction
+   * @param {number} id - Goal transaction ID
+   * @returns {Promise<void>}
+   */
+  async function deleteGoalTransaction(id) {
+    const existing = await db.goalTransactions.get(id);
+    if (!existing) {
+      console.warn('Goal transaction not found for deletion:', id);
+      return;
+    }
+
+    // Revert the goal's currentAmount
+    const goal = await db.savingsGoals.get(existing.goalId);
+    if (goal) {
+      const amountDelta = existing.transactionType === 'contribution' ? -existing.amount : existing.amount;
+      const newCurrentAmount = Math.max(0, (goal.currentAmount || 0) + amountDelta);
+      await updateSavingsGoal(existing.goalId, { currentAmount: newCurrentAmount });
+    }
+
+    const deleted = {
+      ...existing,
+      deleted: 1,
+      updated_at: Date.now(),
+      deviceId: 'web',
+      data_hash: null
+    };
+
+    if (typeof DataHashService !== 'undefined') {
+      deleted.data_hash = await DataHashService.computeGoalTransactionHash(deleted);
+    }
+
+    await db.goalTransactions.put(deleted);
+
+    if (typeof autoSyncCRUD !== 'undefined') {
+      autoSyncCRUD.recordChange('goalTransactions', 'delete', deleted);
+    }
+
+    window.dispatchEvent(new CustomEvent('data-updated', { detail: { type: 'goal-transaction-deleted' } }));
+
+    console.log('🗑️ Soft deleted goal transaction:', id);
+  }
+
   // Public API
   return {
     db,
@@ -808,6 +1384,7 @@ const Storage = (() => {
     getAllTransactions,
     getTransactionsByMonth,
     getAllCategories,
+    getActiveCategories,
     getCategoryById,
     getBudgetHistory,
     getAllSavingsGoals,
@@ -819,6 +1396,18 @@ const Storage = (() => {
     upsertRecord,
     markDeleted,
     getChangedRecords,
-    getSyncSnapshot
+    getSyncSnapshot,
+    // CRUD operations
+    createTransaction,
+    updateTransaction,
+    deleteTransaction,
+    createCategory,
+    updateCategory,
+    deleteCategory,
+    createSavingsGoal,
+    updateSavingsGoal,
+    deleteSavingsGoal,
+    createGoalTransaction,
+    deleteGoalTransaction
   };
 })();

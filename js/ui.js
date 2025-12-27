@@ -851,6 +851,10 @@ const UI = (() => {
             <span class="compact-transaction-date">${Utils.formatRelativeDate(t.transactionDate)}</span>
           </div>
           <span class="compact-transaction-amount ${amountClass}">${amountPrefix}${Utils.formatCurrency(t.transactionAmount, currency)}</span>
+          <div class="row-actions">
+            <button class="action-btn" onclick="CrudUI.showEditTransactionModal('${t.transactionID}')" title="Edit">✏️</button>
+            <button class="action-btn delete" onclick="CrudUI.deleteTransaction('${t.transactionID}')" title="Delete">🗑️</button>
+          </div>
         </div>
       `;
     }).join('');
